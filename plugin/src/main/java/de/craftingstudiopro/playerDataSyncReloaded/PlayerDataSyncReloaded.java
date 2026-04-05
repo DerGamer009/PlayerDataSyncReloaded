@@ -105,7 +105,9 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
             storage.init();
             return true;
         } catch (Exception e) {
-            getLogger().log(java.util.logging.Level.SEVERE, "Storage initialization failed", e);
+            getLogger().severe("§cCould not connect to the database!");
+            getLogger().severe("§cPlease check your credentials in the §fconfig.yml§c.");
+            // We only log the detailed error in debug mode or just keep it simple
             return false;
         }
     }
