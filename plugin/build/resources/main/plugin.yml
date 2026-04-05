@@ -1,0 +1,16 @@
+name: PlayerDataSyncReloaded
+version: '26.4.1-SNAPSHOT'
+main: de.craftingstudiopro.playerDataSyncReloaded.PlayerDataSyncReloaded
+api-version: '1.21'
+load: POSTWORLD
+prefix: PlayerDataSync
+folia-supported: true
+description: Synchronize player data across multiple server instances.
+author: CraftingStudioPro, DerGamer09
+website: https://craftingstudiopro.de
+
+commands:
+  playerdatasync:
+    description: Main command for PlayerDataSyncReloaded
+    aliases: [pds, pdasync]
+    permission: playerdatasync.admin
