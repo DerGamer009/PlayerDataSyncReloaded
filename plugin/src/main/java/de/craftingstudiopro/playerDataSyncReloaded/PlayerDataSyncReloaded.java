@@ -5,7 +5,7 @@ import de.craftingstudiopro.playerDataSyncReloaded.common.SyncManager;
 import de.craftingstudiopro.playerDataSyncReloaded.common.storage.MongoStorage;
 import de.craftingstudiopro.playerDataSyncReloaded.common.storage.SqlStorage;
 import de.craftingstudiopro.playerDataSyncReloaded.common.storage.Storage;
-import de.craftingstudiopro.playerDataSyncReloaded.v26_1.VersionHandlerImpl;
+// import de.craftingstudiopro.playerDataSyncReloaded.v26_1.VersionHandlerImpl;
 import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -63,12 +63,12 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         try {
             if (nmsVersion.equals("v1_8_R3")) {
                 this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_8_R3.VersionHandlerImpl();
-            } else if (nmsVersion.startsWith("v26") || nmsVersion.startsWith("v1_21")) {
-                this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v26_1.VersionHandlerImpl();
+            } else if (nmsVersion.startsWith("v1_21")) {
+                this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1.VersionHandlerImpl();
             } else {
-                // Default to modern handler as it's the most compatible with recent years
-                this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v26_1.VersionHandlerImpl();
-                getLogger().warning("Unknown NMS version! Using modern fallback (v26.1). Might have issues.");
+                // Default to 1.21 handler as it's the most stable modern version
+                this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1.VersionHandlerImpl();
+                getLogger().warning("Unknown NMS version! Using 1.21 fallback. Might have issues.");
             }
             return true;
         } catch (Exception e) {

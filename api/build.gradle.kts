@@ -1,3 +1,5 @@
 dependencies {
-    // No Paper dependency needed for a pure API/Model module!
+    // We add the oldest Spigot API to provide base classes like Player
+    // while remaining fully compatible with Java 8.
+    compileOnly("org.spigotmc:spigot-api:1.8.8-R0.1-SNAPSHOT")
 }
