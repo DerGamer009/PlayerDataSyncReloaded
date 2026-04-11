@@ -1,0 +1,71 @@
+name: PlayerDataSync Plugin Build
+
+on:
+  push:
+    paths:
+      - 'plugin/**'
+    branches: [ "main" ]
+  pull_request:
+    paths:
+      - 'plugin/**'
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+      working-directory: .
+
+    - name: Build with Gradle
+      run: ./gradlew :plugin:build > build.log 2>&1
+      working-directory: .
+
+    - name: Notify Bug Tracker (Success)
+      if: success()
+      run: |
+        VERSION=$(grep "version" plugin/build.gradle.kts | head -n 1 | cut -d '"' -f 2)
+        CHANGELOG=$(git log -1 --pretty=%B)
+        LOGS=$(cat build.log | tail -c 15000)
+        
+        # Prepare JSON payload carefully to handle newlines in logs
+        jq -n \
+          --arg ver "v$VERSION-build-${{ github.run_number }}" \
+          --arg change "$CHANGELOG" \
+          --arg log "$LOGS" \
+          --arg status "success" \
+          '{version: $ver, changelog: $change, logs: $log, status: $status}' > payload.json
+
+        curl -X POST "${{ secrets.DASHBOARD_URL }}/api/builds" \
+          -H "Authorization: Bearer ${{ secrets.PDS_API_KEY }}" \
+          -H "Content-Type: application/json" \
+          -d @payload.json
+
+    - name: Notify Bug Tracker (Failure)
+      if: failure()
+      run: |
+        LOGS=$(cat build.log | tail -c 15000)
+        
+        jq -n \
+          --arg ver "build-${{ github.run_number }}-failed" \
+          --arg change "Build failed at step: ${{ github.job }}" \
+          --arg log "$LOGS" \
+          --arg status "failed" \
+          '{version: $ver, changelog: $change, logs: $log, status: $status}' > payload.json
+
+        curl -X POST "${{ secrets.DASHBOARD_URL }}/api/builds" \
+          -H "Authorization: Bearer ${{ secrets.PDS_API_KEY }}" \
+          -H "Content-Type: application/json" \
+          -d @payload.json
+
