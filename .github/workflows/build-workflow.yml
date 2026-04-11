@@ -22,7 +22,9 @@ jobs:
         cache: gradle
 
     - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+      run: |
+        sed -i 's/\r$//' gradlew
+        chmod +x gradlew
       working-directory: .
 
     - name: Build with Gradle
@@ -67,6 +69,15 @@ jobs:
           -H "Authorization: Bearer ${{ secrets.PDS_API_KEY }}" \
           -H "Content-Type: application/json" \
           -d @payload.json
+
+    - name: Print Build Log on Failure
+      if: failure()
+      run: |
+        if [ -f build.log ]; then
+          cat build.log
+        else
+          echo "build.log not found."
+        fi
 
     - name: Upload Build Artifact
       if: success()
