@@ -8,9 +8,7 @@ dependencies {
     implementation(project(":common"))
 
     val versionModules = listOf(
-        "v1_8_R3", "v1_9_R2", "v1_10_R1", "v1_11_R1", "v1_12_R1",
-        "v1_13_R2", "v1_14_R1", "v1_15_R1", "v1_16_R3", "v1_17_R1",
-        "v1_18_R2", "v1_19_R3", "v1_20_R1", "v1_21_R1", "v26_1_R1"
+        "v1_20_R1", "v1_21_R1", "v26_1_R1"
     )
 
     versionModules.forEach {
@@ -19,7 +17,7 @@ dependencies {
 
     implementation("org.bstats:bstats-bukkit:3.1.0")
     implementation("org.jetbrains:annotations:24.1.0")
-    compileOnly("org.spigotmc:spigot-api:1.10.2-R0.1-SNAPSHOT")
+    compileOnly("io.papermc.paper:paper-api:1.20.1-R0.1-SNAPSHOT")
 }
 
 tasks {

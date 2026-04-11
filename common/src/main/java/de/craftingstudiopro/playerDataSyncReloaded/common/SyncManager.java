@@ -31,6 +31,17 @@ public class SyncManager {
 
     public void setRedisManager(RedisManager redisManager) {
         this.redisManager = redisManager;
+        this.redisManager.subscribe(message -> {
+            if (message.startsWith("saved:")) {
+                String uuidStr = message.substring(6);
+                UUID uuid = UUID.fromString(uuidStr);
+                Player player = Bukkit.getPlayer(uuid);
+                if (player != null && player.isOnline()) {
+                    logger.info("Received Redis update for " + player.getName() + ", re-syncing...");
+                    handleJoin(player); // Re-trigger load
+                }
+            }
+        });
     }
 
     private boolean isFolia() {
@@ -88,12 +99,36 @@ public class SyncManager {
         }
 
         PlayerData data = versionHandler.capture(player);
+        filterData(data); // Apply config filters
+        
         storage.save(data).thenRun(() -> {
             logger.info("Saved data for player: " + player.getName());
             if (redisManager != null) {
                 redisManager.publish("saved:" + player.getUniqueId().toString());
             }
         });
+    }
+
+    private void filterData(PlayerData data) {
+        var config = plugin.getConfig();
+        if (!config.getBoolean("sync.inventory", true)) data.inventoryContents = null;
+        if (!config.getBoolean("sync.ender_chest", true)) data.enderChestContents = null;
+        if (!config.getBoolean("sync.health", true)) data.health = 20.0;
+        if (!config.getBoolean("sync.food", true)) {
+            data.foodLevel = 20;
+            data.saturation = 5.0f;
+            data.exhaustion = 0.0f;
+        }
+        if (!config.getBoolean("sync.experience", true)) {
+            data.level = 0;
+            data.exp = 0;
+            data.totalExperience = 0;
+        }
+        if (!config.getBoolean("sync.potion_effects", true)) data.potionEffects = null;
+        if (!config.getBoolean("sync.game_mode", true)) data.gameMode = "SURVIVAL";
+        if (!config.getBoolean("sync.location", true)) data.worldName = null;
+        if (!config.getBoolean("sync.attributes", true)) data.attributes = null;
+        if (!config.getBoolean("sync.pdc", true)) data.persistentDataContainer = null;
     }
 
     public boolean isSyncInProgress(UUID uuid) {

@@ -4,7 +4,7 @@ plugins {
 
 allprojects {
     group = "de.craftingstudiopro"
-    version = "26.4.1-SNAPSHOT"
+    version = "26.4-Release"
 
     repositories {
         mavenLocal()
@@ -28,18 +28,10 @@ subprojects {
     val moduleName = name
     
     val javaReleaseVersion = when {
-        moduleName == "plugin" || moduleName == "api" || moduleName == "common" ||
-        moduleName.startsWith("v1_8_") || moduleName.startsWith("v1_9_") ||
-        moduleName.startsWith("v1_10_") || moduleName.startsWith("v1_11_") ||
-        moduleName.startsWith("v1_12_") || moduleName.startsWith("v1_13_") ||
-        moduleName.startsWith("v1_14_") || moduleName.startsWith("v1_15_") ||
-        moduleName.startsWith("v1_16_") -> 8
-        
-        moduleName.startsWith("v1_17_") -> 16
-        moduleName.startsWith("v1_18_") || moduleName.startsWith("v1_19_") -> 17
+        moduleName == "plugin" || moduleName == "api" || moduleName == "common" -> 25 // Build core with latest
         moduleName.startsWith("v1_20_") || moduleName.startsWith("v1_21_") -> 21
         moduleName.startsWith("v26_1_") -> 25
-        else -> 8
+        else -> 21
     }
 
     tasks.withType<JavaCompile> {

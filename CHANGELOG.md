@@ -5,25 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [26.4.1-SNAPSHOT] - 2026-04-11
+## [26.4-Release] - 2026-04-12
+
+### Added
+- **Redis Sync Engine**: Fully implemented Redis Pub/Sub for near-instant synchronization across server networks.
+- **Admin Utilities**: Added manual `/pds save <player>` and `/pds load <player>` commands for administrative control.
+- **Modern Support Focus**: Optimized synchronization for Minecraft 1.20, 1.21, and experimental Paper versions (26.1).
+- **Config-Driven Sync**: Added toggles to enable/disable specific data synchronization (Inventory, Stats, PDC, etc.).
+
+### Changed
+- **Dropped Legacy Support**: Removed all code and modules related to Minecraft versions 1.8 through 1.19 to improve performance and maintainability.
+- **Code Optimization**: Refactored the internal version handling system for better stability on modern Paper/Folia environments.
+
+## [26.4.1-ALPHA] - 2026-04-11
 
 ### Added
 - **Initial Reload Release**: Complete rewrite and modernization of the sync engine.
 - **Java 25 Support**: Leveraged the latest Java features for performance.
 - **Multi-Database Support**: Added drivers for MySQL, MariaDB, PostgreSQL, and MongoDB.
-- **Redis Pub/Sub Sync**: Implemented ultra-fast synchronization for high-traffic networks.
 - **Folia Compatibility**: Support for region-based multithreading.
 - **AES Encryption**: Secure player data storage and transmission.
-- **Expanded Sync Options**:
-    - Inventory and Ender Chest.
-    - Health, Food, and Experience.
-    - Potion Effects.
-    - Advancements and Statistics.
-    - Game Mode and Flight status.
-    - Location tracking across instances.
-    - Attributes and Persistent Data Container (PDC) data.
-- **New Command System**: Improved `/playerdatasync` (aliases: `/pds`, `/pdasync`).
-- **Improved Config**: New structured `config.yml` with clear documentation for all settings.
+- **Expanded Sync Options**: Comprehensive data tracking including PDC and Attributes.
+- **New Command System**: Base structure for `/playerdatasync`.
+- **Improved Config**: New structured `config.yml`.
 
 ### Dependencies
 - **HikariCP (4.0.3)**: Connection pooling for SQL databases.

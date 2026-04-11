@@ -22,6 +22,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
     private VersionHandler versionHandler;
     private Storage storage;
     private SyncManager syncManager;
+    private de.craftingstudiopro.playerDataSyncReloaded.common.redis.RedisManager redisManager;
 
     @Override
     public void onEnable() {
@@ -43,6 +44,8 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         getLogger().info("§aSuccessfully connected to storage backend.");
 
         this.syncManager = new SyncManager(this, storage, versionHandler);
+        setupRedis();
+        
         Bukkit.getPluginManager().registerEvents(this, this);
         
         getCommand("playerdatasync").setExecutor(new de.craftingstudiopro.playerDataSyncReloaded.plugin.command.PDSCommand(this));
@@ -55,25 +58,53 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
     }
 
     private boolean setupVersionHandler() {
-        String versionString = Bukkit.getServer().getClass().getPackage().getName();
-        String nmsVersion = versionString.substring(versionString.lastIndexOf('.') + 1);
+        String bukkitVersion = Bukkit.getBukkitVersion();
         
-        getLogger().info("Detected NMS Version: " + nmsVersion);
+        getLogger().info("Detected Bukkit Version: " + bukkitVersion);
 
         try {
-            if (nmsVersion.equals("v1_8_R3")) {
-                this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_8_R3.VersionHandlerImpl();
-            } else if (nmsVersion.startsWith("v1_21")) {
+            if (bukkitVersion.contains("1.21.4") || bukkitVersion.contains("26.1.1")) {
+                this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v26_1.VersionHandlerImpl();
+            } else if (bukkitVersion.startsWith("1.21")) {
                 this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1.VersionHandlerImpl();
+            } else if (bukkitVersion.startsWith("1.20")) {
+                // Actually, v1_20_R1 might not be implemented yet or has a different name
+                // For now we'll assume a standard naming or fallback to 1.21
+                try {
+                    this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_20_R1.VersionHandlerImpl();
+                } catch (NoClassDefFoundError | ClassNotFoundException e) {
+                    this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1.VersionHandlerImpl();
+                    getLogger().warning("1.20 implementation not found, falling back to 1.21 handler.");
+                }
             } else {
                 // Default to 1.21 handler as it's the most stable modern version
                 this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1.VersionHandlerImpl();
-                getLogger().warning("Unknown NMS version! Using 1.21 fallback. Might have issues.");
+                getLogger().warning("Unsupported Bukkit version! Using 1.21 fallback. Might have issues.");
             }
             return true;
-        } catch (Exception e) {
-            getLogger().log(java.util.logging.Level.SEVERE, "Version handler setup failed", e);
+        } catch (NoClassDefFoundError | Exception e) {
+            getLogger().log(java.util.logging.Level.SEVERE, "Version handler setup failed. This is likely due to missing version-specific code in the jar.", e);
             return false;
+        }
+    }
+
+    private void setupRedis() {
+        FileConfiguration config = getConfig();
+        if (config.getBoolean("redis.enabled", false)) {
+            String host = config.getString("redis.host", "localhost");
+            int port = config.getInt("redis.port", 6379);
+            String password = config.getString("redis.password", "");
+            boolean ssl = config.getBoolean("redis.ssl", false);
+            
+            this.redisManager = new de.craftingstudiopro.playerDataSyncReloaded.common.redis.RedisManager(getLogger(), host, port, password, ssl);
+            try {
+                this.redisManager.init();
+                this.syncManager.setRedisManager(this.redisManager);
+                getLogger().info("§aRedis synchronization enabled!");
+            } catch (Exception e) {
+                getLogger().severe("§cCould not connect to Redis! Synchronization might be delayed.");
+                this.redisManager = null;
+            }
         }
     }
 
@@ -134,6 +165,13 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         if (storage != null) {
             storage.close();
         }
+        if (redisManager != null) {
+            redisManager.close();
+        }
+    }
+
+    public SyncManager getSyncManager() {
+        return syncManager;
     }
 
     @EventHandler(priority = EventPriority.MONITOR)

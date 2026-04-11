@@ -1,8 +1,8 @@
 # PlayerDataSyncReloaded
 
-![Version](https://img.shields.io/badge/version-26.4.1--SNAPSHOT-blue.svg)
+![Version](https://img.shields.io/badge/version-26.4--Release-blue.svg)
 ![Java](https://img.shields.io/badge/Java-25-orange.svg)
-![Platform](https://img.shields.io/badge/Platform-Spigot%20%7C%20Paper%20%7C%20Folia-green.svg)
+![Platform](https://img.shields.io/badge/Platform-Paper%20%7C%20Folia%20(1.20+)-green.svg)
 
 **PlayerDataSyncReloaded** is a high-performance synchronization solution for Minecraft player data across multiple server instances. Designed for networks and multi-server environments, it ensures a seamless player experience by keeping inventories, stats, and more consistent across the proxy.
 
@@ -28,7 +28,7 @@
 ## 🛠️ Requirements
 
 - **Java 25** or higher.
-- A Spigot, Paper, or Folia based server.
+- A Paper or Folia based server (1.20 or higher).
 - A database (MySQL, MariaDB, Postgres, or MongoDB).
 - (Optional) Redis for improved performance.
 

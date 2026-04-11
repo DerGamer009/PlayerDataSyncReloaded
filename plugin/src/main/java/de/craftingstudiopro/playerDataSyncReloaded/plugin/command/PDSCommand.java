@@ -39,6 +39,28 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
+        if (args[0].equalsIgnoreCase("save") && args.length > 1) {
+            org.bukkit.entity.Player target = org.bukkit.Bukkit.getPlayer(args[1]);
+            if (target != null) {
+                plugin.getSyncManager().handleQuit(target);
+                sender.sendMessage("§aManually saved data for " + target.getName());
+            } else {
+                sender.sendMessage("§cPlayer not found.");
+            }
+            return true;
+        }
+
+        if (args[0].equalsIgnoreCase("load") && args.length > 1) {
+            org.bukkit.entity.Player target = org.bukkit.Bukkit.getPlayer(args[1]);
+            if (target != null) {
+                plugin.getSyncManager().handleJoin(target);
+                sender.sendMessage("§aManually loading data for " + target.getName());
+            } else {
+                sender.sendMessage("§cPlayer not found.");
+            }
+            return true;
+        }
+
         return false;
     }
 
