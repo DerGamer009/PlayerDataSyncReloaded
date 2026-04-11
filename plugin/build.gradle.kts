@@ -18,6 +18,7 @@ dependencies {
     implementation("org.bstats:bstats-bukkit:3.1.0")
     implementation("org.jetbrains:annotations:24.1.0")
     compileOnly("io.papermc.paper:paper-api:1.20.1-R0.1-SNAPSHOT")
+    compileOnly("com.github.MilkBowl:VaultAPI:1.7.1")
 }
 
 tasks {

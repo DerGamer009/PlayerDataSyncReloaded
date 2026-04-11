@@ -39,6 +39,7 @@ public class PlayerData implements Serializable {
     // Advancements/Statistics
     public String statistics;
     public String advancements;
+    public double balance;
 
     // Location
     public String worldName;

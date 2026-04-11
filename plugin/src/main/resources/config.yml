@@ -1,4 +1,20 @@
-# PlayerDataSyncReloaded Config
+# Global Settings
+debug: false
+
+# Auto-Save Settings (Safe guard against crashes)
+autosave:
+  enabled: true
+  interval: 300 # In seconds (5 minutes)
+
+# Exclusion Settings
+exclusions:
+  # Worlds where players will NOT have their data saved/loaded
+  worlds:
+    - "no_sync_world"
+  # Items that will NOT be synced (by Material name)
+  items:
+    - "BARRIER"
+    - "BEDROCK"
 
 # Storage Settings
 storage:
@@ -10,6 +26,18 @@ storage:
   password: ""
   # Connection URL for MongoDB Cloud (Atlas) or advanced setups
   connection_url: "mongodb+srv://user:pass@host/database"
+
+# Migration Settings (Used only for /pds migrate command)
+# This is the TARGET storage where data will be moved TO.
+migration:
+  legacy: false # Set to true if migrating from the OLD PlayerDataSync version
+  type: "mongodb"
+  host: "localhost"
+  port: 27017
+  database: "minecraft_new"
+  username: "root"
+  password: ""
+  connection_url: ""
 
 # Redis Settings (Highly recommended for cross-server syncing)
 redis:
@@ -39,6 +67,7 @@ sync:
   location: true
   attributes: true
   pdc: true # Persistent Data Container
+  economy: true # Vault Economy
 
 # Message Settings
 messages:

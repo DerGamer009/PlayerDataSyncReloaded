@@ -1,9 +1,8 @@
 dependencies {
     implementation(project(":api"))
     
-    // Use the oldest supported Paper API for the common module
-    // to ensure Java 8 compatibility and broad support.
-    compileOnly("org.spigotmc:spigot-api:1.10.2-R0.1-SNAPSHOT")
+    // Use the modern Paper API for the common module
+    compileOnly("io.papermc.paper:paper-api:1.20.4-R0.1-SNAPSHOT")
     
     // Database Drivers
     implementation("com.zaxxer:HikariCP:4.0.3") // Java 8 compatible version
@@ -16,4 +15,7 @@ dependencies {
     
     // JSON
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // Vault API
+    compileOnly("com.github.MilkBowl:VaultAPI:1.7.1")
 }

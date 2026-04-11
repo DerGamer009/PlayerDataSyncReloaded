@@ -4,6 +4,7 @@ import de.craftingstudiopro.playerDataSyncReloaded.api.PlayerData;
 import de.craftingstudiopro.playerDataSyncReloaded.api.VersionHandler;
 import de.craftingstudiopro.playerDataSyncReloaded.common.redis.RedisManager;
 import de.craftingstudiopro.playerDataSyncReloaded.common.storage.Storage;
+import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -18,8 +19,10 @@ public class SyncManager {
     private final VersionHandler versionHandler;
     private final Logger logger;
     private final ConcurrentHashMap<UUID, Boolean> syncInProgress = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Integer> inventoryHashes = new ConcurrentHashMap<>();
     private final boolean isFolia;
     private RedisManager redisManager;
+    private Economy economy;
 
     public SyncManager(JavaPlugin plugin, Storage storage, VersionHandler versionHandler) {
         this.plugin = plugin;
@@ -27,6 +30,11 @@ public class SyncManager {
         this.versionHandler = versionHandler;
         this.logger = plugin.getLogger();
         this.isFolia = isFolia();
+        refreshExclusions();
+    }
+
+    public void refreshExclusions() {
+        this.versionHandler.setItemExclusions(plugin.getConfig().getStringList("exclusions.items"));
     }
 
     public void setRedisManager(RedisManager redisManager) {
@@ -37,74 +45,130 @@ public class SyncManager {
                 UUID uuid = UUID.fromString(uuidStr);
                 Player player = Bukkit.getPlayer(uuid);
                 if (player != null && player.isOnline()) {
-                    logger.info("Received Redis update for " + player.getName() + ", re-syncing...");
-                    handleJoin(player); // Re-trigger load
+                    handleJoin(player);
                 }
             }
         });
     }
 
-    private boolean isFolia() {
-        try {
-            Class.forName("io.papermc.paper.threadedregions.RegionizedServer");
-            return true;
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
+    public void setEconomy(Economy economy) {
+        this.economy = economy;
     }
 
     public void handleJoin(Player player) {
+        if (isWorldExcluded(player.getWorld().getName())) {
+            debug("Skipping join sync for " + player.getName() + " in excluded world: " + player.getWorld().getName());
+            return;
+        }
+
         syncInProgress.put(player.getUniqueId(), true);
         
+        String syncStarted = plugin.getConfig().getString("messages.sync_started", "&7Syncing your data...");
+        if (!syncStarted.isEmpty()) {
+            player.sendMessage(format(syncStarted));
+        }
+
         storage.load(player.getUniqueId()).thenAccept(optionalData -> {
             if (optionalData.isPresent()) {
                 PlayerData data = optionalData.get();
-                
                 if (isFolia) {
-                    try {
-                        // Use reflection to call Folia scheduler without direct dependency
-                        Object scheduler = player.getClass().getMethod("getScheduler").invoke(player);
-                        scheduler.getClass().getMethod("run", org.bukkit.plugin.Plugin.class, java.util.function.Consumer.class, Runnable.class)
-                                .invoke(scheduler, plugin, (java.util.function.Consumer<Object>) (task) -> {
-                                    applyData(player, data);
-                                }, null);
-                    } catch (Exception e) {
-                        logger.severe("Failed to use Folia scheduler via reflection: " + e.getMessage());
-                        // Fallback to standard if reflection fails (should not happen on Folia)
-                        Bukkit.getScheduler().runTask(plugin, () -> applyData(player, data));
-                    }
+                    Bukkit.getRegionScheduler().run(plugin, player.getLocation(), task -> applyData(player, data));
                 } else {
-                    Bukkit.getScheduler().runTask(plugin, () -> {
-                        applyData(player, data);
-                    });
+                    Bukkit.getScheduler().runTask(plugin, () -> applyData(player, data));
                 }
             } else {
                 syncInProgress.remove(player.getUniqueId());
             }
+        }).exceptionally(ex -> {
+            syncInProgress.remove(player.getUniqueId());
+            String syncFailed = plugin.getConfig().getString("messages.sync_failed", "&cFailed to sync your data. Please contact an admin.");
+            if (!syncFailed.isEmpty()) {
+                player.sendMessage(format(syncFailed));
+            }
+            logger.severe("Failed to load data for " + player.getName() + ": " + ex.getMessage());
+            return null;
         });
     }
 
     private void applyData(Player player, PlayerData data) {
         if (player.isOnline()) {
             versionHandler.apply(player, data);
+            
+            // Economy Sync
+            if (economy != null && plugin.getConfig().getBoolean("sync.economy", true)) {
+                double current = economy.getBalance(player);
+                double diff = data.balance - current;
+                if (diff > 0) economy.depositPlayer(player, diff);
+                else if (diff < 0) economy.withdrawPlayer(player, Math.abs(diff));
+            }
+
+            if (data.inventoryContents != null) {
+                inventoryHashes.put(player.getUniqueId(), data.inventoryContents.hashCode());
+            }
+            String syncComplete = plugin.getConfig().getString("messages.sync_complete", "&aData synced successfully!");
+            if (!syncComplete.isEmpty()) {
+                player.sendMessage(format(syncComplete));
+            }
             logger.info("Successfully synced data for player: " + player.getName());
         }
         syncInProgress.remove(player.getUniqueId());
     }
 
+    private String format(String message) {
+        String prefix = plugin.getConfig().getString("messages.prefix", "&8[&bSync&8] &r");
+        return org.bukkit.ChatColor.translateAlternateColorCodes('&', prefix + message);
+    }
+
+    private void debug(String message) {
+        if (plugin.getConfig().getBoolean("debug", false)) {
+            logger.info("[DEBUG] " + message);
+        }
+    }
+
     public void handleQuit(Player player) {
+        handleQuit(player, false);
+    }
+
+    public void handleQuit(Player player, boolean isAutosave) {
+        if (isWorldExcluded(player.getWorld().getName())) {
+            debug("Skipping quit sync for " + player.getName() + " in excluded world: " + player.getWorld().getName());
+            return;
+        }
+
         // Kick player if sync is still in progress (highly unlikely at quit)
         if (isSyncInProgress(player.getUniqueId())) {
              logger.warning("Player " + player.getName() + " quit while sync was still in progress!");
         }
 
         PlayerData data = versionHandler.capture(player);
+        
+        // Economy Capture
+        if (economy != null && plugin.getConfig().getBoolean("sync.economy", true)) {
+            data.balance = economy.getBalance(player);
+        }
+
         filterData(data); // Apply config filters
         
+        // Performance optimization: prevent redundant saves if inventory hasn't changed
+        if (data.inventoryContents != null) {
+            int currentHash = data.inventoryContents.hashCode();
+            Integer lastHash = inventoryHashes.remove(player.getUniqueId());
+            if (lastHash != null && lastHash == currentHash && !plugin.getConfig().getBoolean("sync.force_save_on_quit", false)) {
+                debug("Skipping redundant save for " + player.getName() + " (Inventory unchanged)");
+                return;
+            }
+        } else {
+            inventoryHashes.remove(player.getUniqueId());
+        }
+        
         storage.save(data).thenRun(() -> {
-            logger.info("Saved data for player: " + player.getName());
-            if (redisManager != null) {
-                redisManager.publish("saved:" + player.getUniqueId().toString());
+            if (!isAutosave) {
+                logger.info("Saved data for player: " + player.getName());
+                if (redisManager != null) {
+                    redisManager.publish("saved:" + player.getUniqueId().toString());
+                }
+            } else {
+                debug("Auto-saved data for " + player.getName());
             }
         });
     }
@@ -114,24 +178,27 @@ public class SyncManager {
         if (!config.getBoolean("sync.inventory", true)) data.inventoryContents = null;
         if (!config.getBoolean("sync.ender_chest", true)) data.enderChestContents = null;
         if (!config.getBoolean("sync.health", true)) data.health = 20.0;
-        if (!config.getBoolean("sync.food", true)) {
-            data.foodLevel = 20;
-            data.saturation = 5.0f;
-            data.exhaustion = 0.0f;
-        }
         if (!config.getBoolean("sync.experience", true)) {
-            data.level = 0;
             data.exp = 0;
+            data.level = 0;
             data.totalExperience = 0;
         }
-        if (!config.getBoolean("sync.potion_effects", true)) data.potionEffects = null;
-        if (!config.getBoolean("sync.game_mode", true)) data.gameMode = "SURVIVAL";
-        if (!config.getBoolean("sync.location", true)) data.worldName = null;
-        if (!config.getBoolean("sync.attributes", true)) data.attributes = null;
-        if (!config.getBoolean("sync.pdc", true)) data.persistentDataContainer = null;
+    }
+
+    private boolean isWorldExcluded(String worldName) {
+        return plugin.getConfig().getStringList("exclusions.worlds").contains(worldName);
     }
 
     public boolean isSyncInProgress(UUID uuid) {
         return syncInProgress.getOrDefault(uuid, false);
+    }
+
+    private boolean isFolia() {
+        try {
+            Class.forName("io.papermc.paper.threadedregionscheduler.RegionScheduler");
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
     }
 }

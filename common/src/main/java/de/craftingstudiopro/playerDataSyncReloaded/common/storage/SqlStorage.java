@@ -4,15 +4,21 @@ import com.google.gson.Gson;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import de.craftingstudiopro.playerDataSyncReloaded.api.PlayerData;
-
+import de.craftingstudiopro.playerDataSyncReloaded.common.LegacyMigrator;
 import de.craftingstudiopro.playerDataSyncReloaded.common.util.CryptoUtil;
+
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -24,6 +30,7 @@ public class SqlStorage implements Storage {
     private final Logger logger;
     private final Gson gson = new Gson();
     private String encryptionKey = "";
+    private ExecutorService dbExecutor;
 
     public SqlStorage(Logger logger, String type, String host, int port, String database, String user, String password) {
         this.logger = logger;
@@ -62,7 +69,6 @@ public class SqlStorage implements Storage {
         config.setMinimumIdle(2);
         config.setConnectionTimeout(30000);
         
-        // Performance optimizations for MySQL if applicable
         if (dbType.contains("mysql")) {
             config.addDataSourceProperty("cachePrepStmts", "true");
             config.addDataSourceProperty("prepStmtCacheSize", "250");
@@ -70,6 +76,11 @@ public class SqlStorage implements Storage {
         }
 
         dataSource = new HikariDataSource(config);
+        dbExecutor = Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "PlayerDataSync-SqlPool");
+            t.setDaemon(true);
+            return t;
+        });
         createTables();
     }
 
@@ -77,38 +88,31 @@ public class SqlStorage implements Storage {
         String createTableSql = "CREATE TABLE IF NOT EXISTS player_data (" +
                 "uuid VARCHAR(36) PRIMARY KEY," +
                 "name VARCHAR(16) NOT NULL," +
-                "data TEXT NOT NULL," + // JSON serialized
+                "data TEXT NOT NULL," +
                 "last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                 ")";
         
         try (Connection conn = dataSource.getConnection()) {
-            // Create table if it doesn't exist
             try (PreparedStatement ps = conn.prepareStatement(createTableSql)) {
                 ps.execute();
             }
-            
-            // Check if 'data' column exists (migration for older versions)
-            if (!columnExists(conn, "player_data", "data")) {
-                logger.info("Migrating database: Adding missing 'data' column to 'player_data' table...");
-                String alterTableSql = "ALTER TABLE player_data ADD COLUMN data TEXT NOT NULL AFTER name";
-                try (PreparedStatement ps = conn.prepareStatement(alterTableSql)) {
-                    ps.execute();
-                }
-                logger.info("Database migration successful!");
-            }
         } catch (SQLException e) {
-            logger.log(Level.SEVERE, "Could not create or update database tables", e);
-        }
-    }
-
-    private boolean columnExists(Connection conn, String tableName, String columnName) throws SQLException {
-        try (ResultSet rs = conn.getMetaData().getColumns(null, null, tableName, columnName)) {
-            return rs.next();
+            logger.log(Level.SEVERE, "Could not create database tables", e);
         }
     }
 
     @Override
     public void close() {
+        if (dbExecutor != null) {
+            dbExecutor.shutdown();
+            try {
+                if (!dbExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    dbExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                dbExecutor.shutdownNow();
+            }
+        }
         if (dataSource != null) dataSource.close();
     }
 
@@ -140,7 +144,7 @@ public class SqlStorage implements Storage {
             } catch (SQLException e) {
                 logger.log(Level.SEVERE, "Could not save player data for " + data.uuid, e);
             }
-        });
+        }, dbExecutor);
     }
 
     @Override
@@ -153,7 +157,6 @@ public class SqlStorage implements Storage {
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
                         String rawData = rs.getString("data");
-                        
                         if (encryptionKey != null && encryptionKey.length() >= 16 && !rawData.startsWith("{")) {
                             try {
                                 rawData = CryptoUtil.decrypt(rawData, encryptionKey);
@@ -162,7 +165,6 @@ public class SqlStorage implements Storage {
                                 return Optional.empty();
                             }
                         }
-                        
                         return Optional.of(gson.fromJson(rawData, PlayerData.class));
                     }
                 }
@@ -170,6 +172,43 @@ public class SqlStorage implements Storage {
                 logger.log(Level.SEVERE, "Could not load player data for " + uuid, e);
             }
             return Optional.empty();
-        });
+        }, dbExecutor);
+    }
+
+    @Override
+    public CompletableFuture<Optional<PlayerData>> loadLegacy(UUID uuid) {
+        return CompletableFuture.supplyAsync(() -> {
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement("SELECT * FROM player_data WHERE uuid = ?")) {
+                ps.setString(1, uuid.toString());
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        LegacyMigrator mapper = new LegacyMigrator(logger);
+                        return Optional.of(mapper.mapSql(rs));
+                    }
+                }
+            } catch (SQLException e) {
+                logger.log(Level.SEVERE, "Could not load legacy player data for " + uuid, e);
+            }
+            return Optional.empty();
+        }, dbExecutor);
+    }
+
+    @Override
+    public CompletableFuture<List<UUID>> getAllStoredUUIDs() {
+        return CompletableFuture.supplyAsync(() -> {
+            List<UUID> uuids = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement("SELECT uuid FROM player_data")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        uuids.add(UUID.fromString(rs.getString("uuid")));
+                    }
+                }
+            } catch (SQLException e) {
+                logger.log(Level.SEVERE, "Could not get all stored UUIDs", e);
+            }
+            return uuids;
+        }, dbExecutor);
     }
 }

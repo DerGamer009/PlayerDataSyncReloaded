@@ -12,4 +12,7 @@ public interface Storage {
 
     CompletableFuture<Void> save(PlayerData data);
     CompletableFuture<Optional<PlayerData>> load(UUID uuid);
+    CompletableFuture<Optional<PlayerData>> loadLegacy(UUID uuid);
+
+    CompletableFuture<java.util.List<UUID>> getAllStoredUUIDs();
 }
