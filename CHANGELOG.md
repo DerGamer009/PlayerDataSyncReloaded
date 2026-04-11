@@ -3,6 +3,9 @@
 All notable changes to PlayerDataSyncReloaded will be documented in this file.
 
 ## [26.4-Release] - 2026-04-12
+TBD
+
+## [26.4-BETA] - 2026-04-12
 ### Added
 - **Storage Migrator**: Added a powerful tool to move data between any supported database backend (MySQL, MariaDB, PostgreSQL, MongoDB).
 - **Zipped Backup System**: Added `/pds backup export/import` for portable data management and safety.
@@ -28,6 +31,7 @@ All notable changes to PlayerDataSyncReloaded will be documented in this file.
 - Fixed internal `Attribute` constant name changes between 1.20 and 1.21.
 - Fixed `NoClassDefFoundError` occurring when specific version modules were missing.
 - Fixed thread safety issues in MongoDB and SQL storage handlers.
+- Fixed reflection issues for `PersistentDataContainer` compatibility across 1.20/1.21.
 
 ## [26.4.1-ALPHA] - 2026-04-11
 - Initial test release for modern Minecraft versions.
