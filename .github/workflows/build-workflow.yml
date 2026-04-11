@@ -2,13 +2,10 @@ name: PlayerDataSync Plugin Build
 
 on:
   push:
-    paths:
-      - 'plugin/**'
     branches: [ "main" ]
   pull_request:
-    paths:
-      - 'plugin/**'
     branches: [ "main" ]
+  workflow_dispatch: # Ermöglicht den manuellen Start unter dem "Actions"-Tab bei GitHub
 
 jobs:
   build:
@@ -29,17 +26,19 @@ jobs:
       working-directory: .
 
     - name: Build with Gradle
+      # Wir fangen den Output in einer Datei ab, um ihn später ans Dashboard zu senden
       run: ./gradlew :plugin:build > build.log 2>&1
       working-directory: .
 
     - name: Notify Bug Tracker (Success)
       if: success()
       run: |
-        VERSION=$(grep "version" plugin/build.gradle.kts | head -n 1 | cut -d '"' -f 2)
+        # Version aus der build.gradle.kts extrahieren
+        VERSION=$(grep "version =" plugin/build.gradle.kts | head -n 1 | cut -d '"' -f 2)
         CHANGELOG=$(git log -1 --pretty=%B)
         LOGS=$(cat build.log | tail -c 15000)
         
-        # Prepare JSON payload carefully to handle newlines in logs
+        # JSON Payload mit jq erstellen (behandelt Sonderzeichen und Zeilenumbrüche sicher)
         jq -n \
           --arg ver "v$VERSION-build-${{ github.run_number }}" \
           --arg change "$CHANGELOG" \
@@ -68,4 +67,3 @@ jobs:
           -H "Authorization: Bearer ${{ secrets.PDS_API_KEY }}" \
           -H "Content-Type: application/json" \
           -d @payload.json
-
