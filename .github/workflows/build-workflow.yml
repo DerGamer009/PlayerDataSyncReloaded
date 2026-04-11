@@ -39,7 +39,10 @@ jobs:
         CHANGELOG=$(git log -1 --pretty=%B)
         LOGS=$(cat build.log | tail -c 15000)
         
-        # JSON Payload mit jq erstellen (behandelt Sonderzeichen und Zeilenumbrüche sicher)
+        # URL bereinigen (Slash am Ende entfernen falls vorhanden)
+        BASE_URL=$(echo "${{ secrets.DASHBOARD_URL }}" | sed 's/\/$//')
+        
+        # JSON Payload mit jq erstellen
         jq -n \
           --arg ver "v$VERSION-build-${{ github.run_number }}" \
           --arg change "$CHANGELOG" \
@@ -47,7 +50,7 @@ jobs:
           --arg status "success" \
           '{version: $ver, changelog: $change, logs: $log, status: $status}' > payload.json
 
-        curl -X POST "${{ secrets.DASHBOARD_URL }}/api/builds" \
+        curl -i -X POST "$BASE_URL/api/builds" \
           -H "Authorization: Bearer ${{ secrets.PDS_API_KEY }}" \
           -H "Content-Type: application/json" \
           -d @payload.json
@@ -55,7 +58,8 @@ jobs:
     - name: Notify Bug Tracker (Failure)
       if: failure()
       run: |
-        LOGS=$(cat build.log | tail -c 15000)
+        LOGS=$(cat build.log | tail -c 15000 || echo "No logs found")
+        BASE_URL=$(echo "${{ secrets.DASHBOARD_URL }}" | sed 's/\/$//')
         
         jq -n \
           --arg ver "build-${{ github.run_number }}-failed" \
@@ -64,7 +68,7 @@ jobs:
           --arg status "failed" \
           '{version: $ver, changelog: $change, logs: $log, status: $status}' > payload.json
 
-        curl -X POST "${{ secrets.DASHBOARD_URL }}/api/builds" \
+        curl -i -X POST "$BASE_URL/api/builds" \
           -H "Authorization: Bearer ${{ secrets.PDS_API_KEY }}" \
           -H "Content-Type: application/json" \
           -d @payload.json
