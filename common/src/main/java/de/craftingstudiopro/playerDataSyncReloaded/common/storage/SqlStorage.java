@@ -74,17 +74,36 @@ public class SqlStorage implements Storage {
     }
 
     private void createTables() {
-        String sql = "CREATE TABLE IF NOT EXISTS player_data (" +
+        String createTableSql = "CREATE TABLE IF NOT EXISTS player_data (" +
                 "uuid VARCHAR(36) PRIMARY KEY," +
                 "name VARCHAR(16) NOT NULL," +
                 "data TEXT NOT NULL," + // JSON serialized
                 "last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                 ")";
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.execute();
+        
+        try (Connection conn = dataSource.getConnection()) {
+            // Create table if it doesn't exist
+            try (PreparedStatement ps = conn.prepareStatement(createTableSql)) {
+                ps.execute();
+            }
+            
+            // Check if 'data' column exists (migration for older versions)
+            if (!columnExists(conn, "player_data", "data")) {
+                logger.info("Migrating database: Adding missing 'data' column to 'player_data' table...");
+                String alterTableSql = "ALTER TABLE player_data ADD COLUMN data TEXT NOT NULL AFTER name";
+                try (PreparedStatement ps = conn.prepareStatement(alterTableSql)) {
+                    ps.execute();
+                }
+                logger.info("Database migration successful!");
+            }
         } catch (SQLException e) {
-            logger.log(Level.SEVERE, "Could not create tables", e);
+            logger.log(Level.SEVERE, "Could not create or update database tables", e);
+        }
+    }
+
+    private boolean columnExists(Connection conn, String tableName, String columnName) throws SQLException {
+        try (ResultSet rs = conn.getMetaData().getColumns(null, null, tableName, columnName)) {
+            return rs.next();
         }
     }
 
