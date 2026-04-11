@@ -28,8 +28,7 @@ jobs:
       working-directory: .
 
     - name: Build with Gradle
-      # Wir fangen den Output in einer Datei ab, um ihn später ans Dashboard zu senden
-      run: ./gradlew :plugin:build > build.log 2>&1
+      run: ./gradlew :plugin:build 2>&1 | tee build.log
       working-directory: .
 
     - name: Notify Bug Tracker (Success)
