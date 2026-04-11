@@ -17,7 +17,7 @@ public class VersionHandlerImpl extends BaseVersionHandler {
 
     @Override
     protected double getMaxHealth(Player player) {
-        org.bukkit.attribute.AttributeInstance attr = player.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
+        org.bukkit.attribute.AttributeInstance attr = player.getAttribute(org.bukkit.attribute.Attribute.GENERIC_MAX_HEALTH);
         return attr != null ? attr.getBaseValue() : 20.0;
     }
 }
