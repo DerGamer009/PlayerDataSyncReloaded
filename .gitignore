@@ -2,6 +2,7 @@
 .gradle
 build/
 web-docs/
+pds-repo/
 
 # IntelliJ IDEA
 .idea/

@@ -1,57 +1,88 @@
 # 🔄 Data Migration & Transfers
 
-Need to upgrade your database or move from the old PlayerDataSync? This guide covers the safest ways to handle your player data during transitions.
+Modernizing your infrastructure or switching database providers? PlayerDataSync Reloaded provides a rock-solid migration engine designed to handle thousands of player profiles with zero data loss.
 
 ---
 
-## 🚀 The /pds migrate System
+## ⚡ The Migration Engine
 
-Reloaded features a high-performance migration engine capable of moving thousands of player profiles between different database types (e.g., MySQL → MongoDB).
+The `/pds migrate` command is a powerful tool that reads data from your current active `storage` and writes it to a configured `migration` target.
 
-### 1. Preparation
-Configure the **TARGET** database in the `migration:` section of your `config.yml`.
+:::tip
+**Efficiency Matters**  
+The migration engine runs in a separate thread pool to ensure your server performance is not impacted. However, we recommend performing large migrations during low-traffic hours or on a dedicated staging server.
+:::
+
+---
+
+## 🛠️ Step-by-Step Migration
+
+Follow these steps to move from one database type to another (e.g., MySQL → MongoDB).
+
+### 1. Configure the Target
+Open your `config.yml` and locate the `migration` block. Enter the credentials for the database you want to move **TO**.
 
 ```yaml
 migration:
-  type: "mongodb"
-  connection_url: "mongodb://your-new-cloud-db"
-  legacy: false # Only true if moving from the OLD non-Reloaded plugin
+  type: "mongodb" # Options: mysql, mariadb, postgres, mongodb
+  connection_url: "mongodb+srv://admin:password@cluster.example.com/pds"
+  legacy: false # Set to true only if importing from the original PlayerDataSync
 ```
 
-### 2. Execution
-Run the following command from your **Primary Server's Console**:
+### 2. Execute the Migration
+From your **Server Console**, run the migration command:
+
 ```bash
 /pds migrate
 ```
 
-### 3. Verification
-Once the console logs `Migration completed successfully!`:
-1.  Stop the server.
-2.  Update your `storage:` block to the new credentials.
-3.  Restart and verify player data.
+:::warning
+**Do not interrupt the process.**  
+A progress bar will appear in the console. Interrupting the migration might lead to inconsistent data in the target database. Wait for the `Migration completed successfully!` message.
+:::
+
+### 3. Finalize the Switch
+Once finished, swap your configuration:
+1.  Copy the settings from the `migration` block to the main `storage` block.
+2.  Set `migration.enabled: false`.
+3.  Restart all servers in your network to point to the new database.
 
 ---
 
 ## 📦 Backup & Recovery
 
-We recommend performing local backups before any major infrastructure change.
+Before any migration, it is critical to have a restorable backup.
 
-### Manual Backups
-You can create portable `.zip` archives of your entire database:
-*   **Export**: `/pds backup export <name>`
-*   **Import**: `/pds backup import <name>`
+### Creating a Snapshot
+Reloaded can export your entire database into a compressed `.pdsbackup` file.
 
-> [!CAUTION]
-> Backups are stored in `/plugins/PlayerDataSyncReloaded/backups/`. Ensure this folder is protected and not accessible via web servers.
+*   **Export**: `/pds backup export <filename>`
+*   **Import**: `/pds backup import <filename>`
+
+:::caution
+**Storage Safety**  
+Backups are stored in `plugins/PlayerDataSyncReloaded/backups/`. Ensure this directory is included in your regular server backups and never share these files, as they contain sensitive player metadata.
+:::
 
 ---
 
-## 🛠️ Legacy Migration
-Upgrading from the original **PlayerDataSync**?
+## 🏛️ Legacy Import (Original PDS)
 
-1.  Set up your old database as the `storage:`.
-2.  Set up your new database as the `migration:`.
+If you are upgrading from the original **PlayerDataSync** (v1.x), the process is slightly different:
+
+1.  Connect PDS Reloaded to your old database via the `storage` block.
+2.  Configure your new database in the `migration` block.
 3.  Set `migration.legacy: true`.
 4.  Run `/pds migrate`.
 
-The engine will automatically handle the mapping between the old NBT format and the new GZIP-compressed Reloaded format.
+Reloaded will automatically detect the old NBT structure, convert it to the new high-performance GZIP format, and transfer it to the new system.
+
+---
+
+## ❓ Troubleshooting
+
+| Issue | Solution |
+| :--- | :--- |
+| **Authentication Failed** | Double-check your `connection_url`. Ensure special characters are properly URL-encoded. |
+| **Timeout during migration** | Increase the database driver timeout in your `connection_url` (e.g., `?connectTimeout=10000`). |
+| **Data missing after switch** | Check if you performed the migration on the same world/server where people were active. |

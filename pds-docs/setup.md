@@ -1,57 +1,81 @@
 # ⚙️ Installation & Build
 
-Get your synchronization network up and running. This guide covers how to build from source and deploy to your servers.
+Setting up a robust synchronization network requires careful configuration. This guide walks you through the initial deployment and automated build processes.
 
 ---
 
-## 📥 Quick Installation
+## 📥 Prerequisite Checklist
 
-1.  Download the latest [Release Candidate](https://github.com/DerGamer009/PlayerDataSyncReloaded/releases).
-2.  Install the `.jar` in your server's `plugins/` folder.
-3.  **Requirements**:
-    *   Java JDK 25 or higher.
-    *   Paper, Spigot, or Folia (1.20+).
-    *   A supported database (MySQL/MongoDB).
+Before you begin, ensure your infrastructure meets the following high-performance standards:
+
+*   **Runtime**: [OpenJDK 25](https://adoptium.net/) or higher.
+*   **Platform**: Paper, Purpur, or **Folia** (1.20 and up).
+*   **Database**: A dedicated instance of MySQL, MariaDB, PostgreSQL, or MongoDB.
+*   **Speed**: (Recommended) A **Redis** server for ultra-low latency updates.
+
+:::warning
+**Java Version Alert**  
+Reloaded utilizes modern Java 25 features for deep memory management and GZIP efficiency. Older Java versions (17, 21) are NOT supported and will result in a crash on startup.
+:::
 
 ---
 
-## 🛠️ Building from Source
+## 🛠️ Building the Plugin
 
-We use Gradle to manage our build process. You can build the project locally or via CI/CD pipelines like Jenkins or GitHub Actions.
+We use a modular Gradle architecture. This allows us to maintain compatibility across multiple Minecraft versions while keeping the core logic consistent.
 
-### Local Build
+### Compiling on your machine
 ```bash
+# Clone the repository
 git clone https://github.com/DerGamer009/PlayerDataSyncReloaded.git
 cd PlayerDataSyncReloaded
+
+# Build the shaded plugin jar
 ./gradlew clean :plugin:shadowJar
 ```
-The final artifact will be located in: `plugin/build/libs/PlayerDataSyncReloaded-26.4.jar`
+
+:::tip
+**Finding the Jar**  
+After a successful build, your production-ready JAR is located at:  
+`plugin/build/libs/PlayerDataSyncReloaded-26.4.jar`
+:::
 
 ---
 
-## 🤖 Jenkins Integration
+## 🤖 CI/CD Integration
 
-Automate your builds with this freestyle project configuration:
+Automate your development workflow by integrating Reloaded into your build pipelines.
 
-### 1. Repository
-*   **Git URL**: `https://github.com/DerGamer009/PlayerDataSyncReloaded.git`
-*   **Branch**: `*/master`
+### Jenkins Pipeline Snippet
+If you use a Jenkinsfile, you can use the following stage:
 
-### 2. Gradle Setup
-| Option | Setting |
-| :--- | :--- |
-| **Tasks** | `clean :plugin:shadowJar` |
-| **Wrapper** | Enabled (Recommended) |
-| **Java** | JDK 25 |
-
-### 3. Artifact Archive
-Set the "Post-build Actions" to archive:
-`plugin/build/libs/PlayerDataSyncReloaded-*.jar`
+```groovy
+stage('Build PDS') {
+    steps {
+        sh './gradlew clean :plugin:shadowJar'
+        archiveArtifacts artifacts: 'plugin/build/libs/*.jar', fingerprint: true
+    }
+}
+```
 
 ---
 
-## ❓ Troubleshooting
+## 🌩️ Initial Deployment
 
-*   **UnsupportedClassVersionError**: Ensure your server is running **Java 25**.
-*   **Connection Refused**: Check your database firewall and credentials in `config.yml`.
-*   **Data not syncing**: Ensure all servers in your network are connected to the SAME database.
+1.  Place the JAR file into your `plugins/` directory.
+2.  Start the server once to generate the default `config.yml`.
+3.  Configure your database credentials (see [Configuration Guide](configuration.md)).
+4.  **Restart** the server to establish the connection.
+
+:::caution
+**Network Sync**  
+All servers in your network MUST be connected to the exact same database. If you use Redis, ensure all servers also use the same Redis channel and password.
+:::
+
+---
+
+## 🩺 Diagnostics
+
+*   **Log Check**: Look for `[PlayerDataSyncReloaded] Connected to storage!` in the console.
+*   **Version Check**: Run `/pds version` to confirm you are running the latest release.
+*   **Status Check**: Use `/pds status` to view active sync tasks and database latency.

@@ -1,14 +1,16 @@
 # 🧩 Developer API
 
-PlayerDataSync Reloaded provides a robust API for developers to interact with the synchronization engine or extend player data with custom fields.
+Integrate PlayerDataSync Reloaded into your own plugins. Our modular API allows you to monitor data lifecycles, access synchronized profiles, and extend functionality with zero friction.
 
 ---
 
-## 🏗️ Getting Started
+## 🏗️ Dependency Management
 
-To use the PDS API, add our repository and dependency to your `build.gradle` or `pom.xml`.
+To start building with the PDS API, add our official repository and the API module to your project configuration.
 
-### Gradle (Kotlin)
+::::tabs
+
+:::tab{title="Gradle (Kotlin)"}
 ```kotlin
 repositories {
     maven("https://jitpack.io")
@@ -18,49 +20,80 @@ dependencies {
     compileOnly("com.github.DerGamer009:PlayerDataSyncReloaded:api:26.4")
 }
 ```
+:::
+
+:::tab{title="Gradle (Groovy)"}
+```groovy
+repositories {
+    maven { url 'https://jitpack.io' }
+}
+
+dependencies {
+    compileOnly 'com.github.DerGamer009:PlayerDataSyncReloaded:api:26.4'
+}
+```
+:::
+
+:::tab{title="Maven"}
+```xml
+<repository>
+    <id>jitpack.io</id>
+    <url>https://jitpack.io</url>
+</repository>
+
+<dependency>
+    <groupId>com.github.DerGamer009</groupId>
+    <artifactId>PlayerDataSyncReloaded</artifactId>
+    <version>api-26.4</version>
+    <scope>provided</scope>
+</dependency>
+```
+:::
+
+::::
 
 ---
 
-## 🔓 Accessing the API
+## 📡 Lifecycle Events
 
-The entry point for all API interactions is the `PlayerDataSyncAPI` class (if available) or by fetching the service provider.
+Reloaded fires events for every critical stage of a player's data journey. All events are fired **asynchronously** to maintain maximum server performance.
 
-### Fetching the PlayerData
-You can retrieve the current synchronized data of a player:
+| Event | Thread | Description |
+| :--- | :--- | :--- |
+| `PlayerDataLoadEvent` | Async | Fired after data is retrieved and applied to the player. |
+| `PlayerDataSaveEvent` | Async | Fired before data is serialized and sent to storage. |
+
+### Event Example
+Monitor how long data synchronization takes for your players:
 
 ```java
-import de.craftingstudiopro.playerDataSyncReloaded.api.PlayerData;
-
-// Get data for a specific UUID
-CompletableFuture<Optional<PlayerData>> futureData = api.getPlayerData(uuid);
-
-futureData.thenAccept(optionalData -> {
-    if (optionalData.isPresent()) {
-        PlayerData data = optionalData.get();
-        // Do something with health, exp, or PDC
+@EventHandler
+public void onDataLoad(PlayerDataLoadEvent event) {
+    long ms = event.getLoadTime();
+    Player player = event.getPlayer();
+    
+    if (ms > 500) {
+        getLogger().warning("Slow sync for " + player.getName() + ": " + ms + "ms");
     }
-});
+}
 ```
 
 ---
 
-## 📡 Events
+## 🔓 Using the API Service
 
-PDS fires several events that you can listen to in your plugin.
+Access the core synchronization logic via our service provider interface.
 
-| Event | Description |
-| :--- | :--- |
-| `PlayerDataLoadEvent` | Fired on the main thread after a player's data has been successfully loaded and applied. |
-| `PlayerDataSaveEvent` | Fired before a player's data is serialized and sent to the database. |
-
-### Example Listener
 ```java
-@EventHandler
-public void onDataLoad(PlayerDataLoadEvent event) {
-    Player player = event.getPlayer();
-    PlayerData data = event.getData();
-    
-    player.sendMessage("Welcome back! Your data was synced in " + event.getLoadTime() + "ms.");
+PlayerDataSyncAPI api = Bukkit.getServicesManager().load(PlayerDataSyncAPI.class);
+
+if (api != null) {
+    // Fetch persisted data for any UUID
+    api.getPlayerData(uuid).thenAccept(optionalData -> {
+        optionalData.ifPresent(data -> {
+            System.out.println("Balance: " + data.balance);
+        });
+    });
 }
 ```
 
@@ -68,12 +101,15 @@ public void onDataLoad(PlayerDataLoadEvent event) {
 
 ## 🛠️ Extending Data (PDC)
 
-The best way to sync custom plugin data without touching the PDS core is via **Persistent Data Containers (PDC)**.
+The most consistent way to sync custom plugin data is via the **Persistent Data Container (PDC)**. Since Reloaded synchronizes the entire PDC of every player, any key-value pairs you store there are automatically distributed across your network.
 
-Since PDS Reloaded fully synchronizes the `PersistentDataContainer` of Every player, any data you store there using the Bukkit API will automatically be synced across your network.
+:::tip
+**Auto-Sync Logic**  
+You don't need to write a single line of PDS-specific code to sync custom data. Just use the standard Bukkit/Paper PDC API, and Reloaded handles the global distribution on every server switch or save.
+:::
 
 ```java
-// Saving custom data (automatic sync)
-player.getPersistentDataContainer().set(key, PersistentDataType.STRING, "your_custom_value");
+NamespacedKey myKey = new NamespacedKey(myPlugin, "custom_points");
+player.getPersistentDataContainer().set(myKey, PersistentDataType.INTEGER, 100);
+// This value is now globally synced!
 ```
-PDS takes care of the rest!
