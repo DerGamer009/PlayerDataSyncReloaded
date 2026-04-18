@@ -13,7 +13,7 @@ To start building with the PDS API, add our official repository and the API modu
 :::tab{title="Gradle (Kotlin)"}
 ```kotlin
 repositories {
-    maven("https://jitpack.io")
+    maven("https://repo.dergamer09.at/releases")
 }
 
 dependencies {
@@ -25,7 +25,7 @@ dependencies {
 :::tab{title="Gradle (Groovy)"}
 ```groovy
 repositories {
-    maven { url 'https://jitpack.io' }
+    maven { url 'https://repo.dergamer09.at/releases' }
 }
 
 dependencies {
@@ -37,8 +37,8 @@ dependencies {
 :::tab{title="Maven"}
 ```xml
 <repository>
-    <id>jitpack.io</id>
-    <url>https://jitpack.io</url>
+    <id>pds-repo</id>
+    <url>https://repo.dergamer09.at/releases</url>
 </repository>
 
 <dependency>

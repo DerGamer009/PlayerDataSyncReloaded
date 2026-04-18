@@ -60,6 +60,9 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         // Initialize bStats
         new org.bstats.bukkit.Metrics(this, 30594);
 
+        // Run Update Checker
+        new de.craftingstudiopro.playerDataSyncReloaded.plugin.util.UpdateChecker(this).check();
+
         startAutoSaveTask();
 
         getLogger().info("PlayerDataSyncReloaded version " + getDescription().getVersion() + " enabled.");
