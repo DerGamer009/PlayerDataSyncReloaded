@@ -56,8 +56,8 @@ Reloaded synchronizes almost every aspect of the player state:
 For detailed installation guides, configuration references, and developer documentation, visit our official wiki:
 
 > [!TIP]
-> **Check out the [Documentation Portal](./pds-docs/README.md)**  
-> *Or view the [Migration Guide](./DATATRANSFER.md) for switching from legacy versions.*
+> **Check out the [Official Documentation Portal](https://docs.titannode.de)**  
+> *Or browse the local [Wiki Hub](./pds-docs/README.md) and [Migration Guide](./DATATRANSFER.md).*
 
 ---
 
@@ -95,6 +95,7 @@ public void onDataLoad(PlayerDataLoadEvent event) {
 ### 🤝 Contributing & Support
 
 - **Bug Reports**: Please open an [Issue](https://github.com/DerGamer009/PlayerDataSyncReloaded/issues) with detailed reproduction steps.
+- **Documentation**: [docs.titannode.de](https://docs.titannode.de)
 - **Website**: [craftingstudiopro.de](https://craftingstudiopro.de)
 - **Discord**: Join our community for faster support.
 
