@@ -1,6 +1,8 @@
 # Gradle
 .gradle
 build/
+web-docs/
+pds-docs/
 
 # IntelliJ IDEA
 .idea/

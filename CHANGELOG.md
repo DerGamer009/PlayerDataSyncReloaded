@@ -2,8 +2,24 @@
 
 All notable changes to PlayerDataSyncReloaded will be documented in this file.
 
-## [26.4-Release] - 2026-04-12
-TBD
+## [26.4-Release] - 2026-04-18
+### Added
+- **Storage Migrator**: Full release of the migration tool for seamless transitions between SQL and NoSQL.
+- **Zipped Backup System**: Reliable export/import system for disaster recovery.
+- **Legacy Migration Support**: Bridge for users coming from the original PlayerDataSync version.
+- **Vault Economy Sync**: Stable cross-network balance synchronization.
+- **Advanced Sync Features**: Full support for PDC, Attributes, Statistics, and Advancements.
+- **Auto-Save System**: Background saving task to prevent data loss.
+- **Exclusion System**: World and item blacklists for granular control.
+
+### Changed
+- **Modernized Version Support**: Dropped legacy support. Now exclusively supporting **1.20, 1.21, and 26.1+**.
+- **Performance Optimizations**: GZIP compression and dedicated thread pools are now enabled by default.
+- **Inventory Hashing**: Intelligent skip mechanics for unchanged data.
+
+### Fixed
+- All issues discovered during the Beta phase, including NMS fallback and thread safety.
+
 
 ## [26.4-BETA] - 2026-04-12
 ### Added

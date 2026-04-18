@@ -68,13 +68,14 @@ public class SyncManager {
             player.sendMessage(format(syncStarted));
         }
 
+        long startTime = System.currentTimeMillis();
         storage.load(player.getUniqueId()).thenAccept(optionalData -> {
             if (optionalData.isPresent()) {
                 PlayerData data = optionalData.get();
                 if (isFolia) {
-                    Bukkit.getRegionScheduler().run(plugin, player.getLocation(), task -> applyData(player, data));
+                    Bukkit.getRegionScheduler().run(plugin, player.getLocation(), task -> applyData(player, data, startTime));
                 } else {
-                    Bukkit.getScheduler().runTask(plugin, () -> applyData(player, data));
+                    Bukkit.getScheduler().runTask(plugin, () -> applyData(player, data, startTime));
                 }
             } else {
                 syncInProgress.remove(player.getUniqueId());
@@ -90,7 +91,7 @@ public class SyncManager {
         });
     }
 
-    private void applyData(Player player, PlayerData data) {
+    private void applyData(Player player, PlayerData data, long startTime) {
         if (player.isOnline()) {
             versionHandler.apply(player, data);
             
@@ -105,11 +106,16 @@ public class SyncManager {
             if (data.inventoryContents != null) {
                 inventoryHashes.put(player.getUniqueId(), data.inventoryContents.hashCode());
             }
+
+            // Fire API Event
+            long duration = System.currentTimeMillis() - startTime;
+            Bukkit.getServer().getPluginManager().callEvent(new de.craftingstudiopro.playerDataSyncReloaded.api.event.PlayerDataLoadEvent(player, data, duration));
+
             String syncComplete = plugin.getConfig().getString("messages.sync_complete", "&aData synced successfully!");
             if (!syncComplete.isEmpty()) {
                 player.sendMessage(format(syncComplete));
             }
-            logger.info("Successfully synced data for player: " + player.getName());
+            logger.info("Successfully synced data for player: " + player.getName() + " (" + duration + "ms)");
         }
         syncInProgress.remove(player.getUniqueId());
     }
@@ -160,6 +166,9 @@ public class SyncManager {
         } else {
             inventoryHashes.remove(player.getUniqueId());
         }
+
+        // Fire API Event
+        Bukkit.getServer().getPluginManager().callEvent(new de.craftingstudiopro.playerDataSyncReloaded.api.event.PlayerDataSaveEvent(player, data));
         
         storage.save(data).thenRun(() -> {
             if (!isAutosave) {

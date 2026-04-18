@@ -1,68 +1,101 @@
-# PlayerDataSyncReloaded
+<p align="center">
+  <img src="https://img.craftingstudiopro.de/pds_logo.png" alt="PlayerDataSync Reloaded Logo" width="200px">
+</p>
 
-![Version](https://img.shields.io/badge/version-26.4--Release-blue.svg)
-![Java](https://img.shields.io/badge/Java-25-orange.svg)
-![Platform](https://img.shields.io/badge/Platform-Paper%20%7C%20Folia%20(1.20+)-green.svg)
+<h1 align="center">🔄 PlayerDataSync Reloaded</h1>
 
-**PlayerDataSyncReloaded** is a high-performance synchronization solution for Minecraft player data across multiple server instances. Designed for networks and multi-server environments, it ensures a seamless player experience by keeping inventories, stats, and more consistent across the proxy.
+<p align="center">
+  <strong>The next-generation data synchronization engine for high-performance Minecraft networks.</strong>
+</p>
 
-## 🚀 Features
-
-- **Multi-Database Support**: Sync data using MySQL, MariaDB, PostgreSQL, or MongoDB.
-- **Redis Integration**: High-speed synchronization using Redis Pub/Sub for near-instant updates.
-- **Folia Support**: Fully compatible with the Folia region-based multithreading engine.
-- **AES Encryption**: Secure your player data with optional AES encryption.
-- **Highly Configurable**: Choose exactly what data translates across servers.
-- **Recent Java Support**: Built using Java 25 for maximum performance and modern features.
-
-## 📦 What can be synchronized?
-
-- [x] Inventory & Ender Chest
-- [x] Health, Food & Experience
-- [x] Potion Effects
-- [x] Advancements & Statistics
-- [x] Game Mode & Flight Status
-- [x] Location (optional)
-- [x] Attributes & Persistent Data Containers (PDC)
-
-## 🛠️ Requirements
-
-- **Java 25** or higher.
-- A Paper or Folia based server (1.20 or higher).
-- A database (MySQL, MariaDB, Postgres, or MongoDB).
-- (Optional) Redis for improved performance.
-
-## 📥 Installation
-
-1. Download the latest version from the releases page.
-2. Place the JAR file in the `plugins` folder of all servers you wish to sync.
-3. Restart the servers to generate the configuration.
-4. Configure the database settings in `plugins/PlayerDataSyncReloaded/config.yml`.
-5. Restart the servers again to apply the changes.
-
-## 💻 Commands
-
-| Command | Alias | Description | Permission |
-|---------|-------|-------------|------------|
-| `/playerdatasync` | `/pds`, `/pdasync` | Main plugin command | `playerdatasync.admin` |
-
-## 🛠️ Build from Source
-
-To build the project yourself, ensure you have Java 25 installed:
-
-```bash
-./gradlew build
-```
-
-The output JARs will be located in the `plugin/build/libs/` directory.
+<p align="center">
+  <a href="https://github.com/DerGamer009/PlayerDataSyncReloaded/releases">
+    <img src="https://img.shields.io/badge/version-26.4--Release-blue?style=for-the-badge" alt="Version">
+  </a>
+  <a href="https://www.oracle.com/java/technologies/javase/jdk25-archive-downloads.html">
+    <img src="https://img.shields.io/badge/Java-25-orange?style=for-the-badge&logo=openjdk" alt="Java">
+  </a>
+  <a href="https://papermc.io/">
+    <img src="https://img.shields.io/badge/Platform-Paper%20%7C%20Folia-green?style=for-the-badge" alt="Platform">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License">
+  </a>
+</p>
 
 ---
 
-### 📄 License
+**PlayerDataSync Reloaded** is a premium, open-source synchronization solution designed to handle massive amounts of player data across complex multi-server environments. Whether you're running a survival cluster or a competitive mini-game network, Reloaded ensures your players' inventories, stats, and custom metadata are always exactly where they need to be—instantly.
 
-Distributed under the **MIT License**. See `LICENSE` for more information.
+### 🌟 Key Features
 
-### 🌐 Links
+*   **⚡ Blazing Performance**: Integrated GZIP compression for all serialized data and dedicated asynchronous thread pools to keep the main server thread untouched.
+*   **🌀 Real-Time Synchronization**: Native support for **Redis Pub/Sub** messaging for near-instant data handovers between nodes.
+*   **🛡️ Enterprise-Grade Security**: Optional **AES-256 encryption** for sensitive player profiles, keeping your data safe from unauthorized access.
+*   **Universal Persistence**: Seamlessly connect your network with **MySQL, MariaDB, PostgreSQL, or MongoDB**.
+*   **🌿 Modern Engine**: Fully compatible with **Folia** and its region-based multithreading architecture.
+*   **Modular API**: Powerful events and expansion hooks for developers to sync custom data via **Persistent Data Containers (PDC)**.
 
+---
+
+### 📦 Synchronized Data Points
+
+Reloaded synchronizes almost every aspect of the player state:
+
+- [x] **Inventories**: Full support for player inventory, armor slots, and Ender Chests.
+- [x] **Vital Stats**: Health, hunger, saturation, experience levels, and potion effects.
+- [x] **Progress**: Advancements, complex statistics, and achievement history.
+- [x] **State**: Game mode, flight status, location (optional), and custom attributes.
+- [x] **Economy**: Direct integration with **Vault** for cross-network balance sync.
+- [x] **Metadata**: Deep synchronization of **Persistent Data Containers (PDC)**.
+
+---
+
+### 📖 Documentation
+
+For detailed installation guides, configuration references, and developer documentation, visit our official wiki:
+
+> [!TIP]
+> **Check out the [Documentation Portal](./pds-docs/README.md)**  
+> *Or view the [Migration Guide](./DATATRANSFER.md) for switching from legacy versions.*
+
+---
+
+### 🛠️ Quick Start
+
+#### Requirements
+- **Java 25** or higher.
+- **Paper** or **Folia** (1.20+).
+- A database backend (SQL or MongoDB).
+
+#### Installation
+1.  Download the latest release from [Releases](https://github.com/DerGamer009/PlayerDataSyncReloaded/releases).
+2.  Drop the `.jar` into your `plugins/` directory on all servers.
+3.  Configure your database credentials in `config.yml`.
+4.  Restart and experience seamless synchronization!
+
+---
+
+### 💻 Developer API
+
+Hook into the synchronization engine with our event-driven API:
+
+```java
+@EventHandler
+public void onDataLoad(PlayerDataLoadEvent event) {
+    Player player = event.getPlayer();
+    PlayerData data = event.getData();
+    // Data has been applied to the player!
+}
+```
+*See the [API Docs](./pds-docs/api.md) for more information.*
+
+---
+
+### 🤝 Contributing & Support
+
+- **Bug Reports**: Please open an [Issue](https://github.com/DerGamer009/PlayerDataSyncReloaded/issues) with detailed reproduction steps.
 - **Website**: [craftingstudiopro.de](https://craftingstudiopro.de)
-- **Author**: CraftingStudioPro, DerGamer09
+- **Discord**: Join our community for faster support.
+
+*Developed with ❤️ by **CraftingStudioPro** & **DerGamer09***

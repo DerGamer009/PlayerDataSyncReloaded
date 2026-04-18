@@ -4,7 +4,7 @@ plugins {
 
 allprojects {
     group = "de.craftingstudiopro"
-    version = "26.4-BETA"
+    version = properties["version"] ?: "26.4"
 
     repositories {
         mavenLocal()
