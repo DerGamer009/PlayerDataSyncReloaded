@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/DerGamer009/PlayerDataSyncReloaded/releases">
-    <img src="https://img.shields.io/badge/version-26.4--Release-blue?style=for-the-badge" alt="Version">
+    <img src="https://img.shields.io/badge/version-26.5--Release-violet?style=for-the-badge" alt="Version">
   </a>
   <a href="https://www.oracle.com/java/technologies/javase/jdk25-archive-downloads.html">
     <img src="https://img.shields.io/badge/Java-25-orange?style=for-the-badge&logo=openjdk" alt="Java">

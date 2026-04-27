@@ -2,6 +2,21 @@
 
 All notable changes to PlayerDataSyncReloaded will be documented in this file.
 
+## [26.5-Release] - 2026-04-27
+### Added
+- **API Extensibility**: Added `extraData` map to `PlayerData` for third-party plugin data synchronization.
+- **Save Cancellation**: `PlayerDataSaveEvent` now implements `Cancellable`, allowing plugins to prevent data from being saved under specific conditions.
+- **Granular Sync Controls**: Added new configuration options to disable syncing for Potion Effects, Food, GameMode, Advancements, and Statistics.
+- **Improved Version Detection**: Better handling for Minecraft 1.21.1 and future sub-versions.
+
+### Changed
+- **Banner Update**: Refreshed the startup banner with new colors and "Expansion Update" subtitle.
+- **Performance**: Minor internal optimizations for event handling.
+
+### Fixed
+- Potential edge case where data might save during an invalid state.
+
+
 ## [26.4-Release] - 2026-04-18
 ### Added
 - **Storage Migrator**: Full release of the migration tool for seamless transitions between SQL and NoSQL.

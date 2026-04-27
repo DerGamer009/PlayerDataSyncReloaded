@@ -51,4 +51,7 @@ public class PlayerData implements Serializable {
 
     // Attributes
     public Map<String, Double> attributes;
+
+    // Extra Data for third-party hooks
+    public Map<String, String> extraData = new java.util.HashMap<>();
 }

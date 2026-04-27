@@ -168,7 +168,13 @@ public class SyncManager {
         }
 
         // Fire API Event
-        Bukkit.getServer().getPluginManager().callEvent(new de.craftingstudiopro.playerDataSyncReloaded.api.event.PlayerDataSaveEvent(player, data));
+        de.craftingstudiopro.playerDataSyncReloaded.api.event.PlayerDataSaveEvent event = new de.craftingstudiopro.playerDataSyncReloaded.api.event.PlayerDataSaveEvent(player, data);
+        Bukkit.getServer().getPluginManager().callEvent(event);
+        
+        if (event.isCancelled()) {
+            debug("Save for " + player.getName() + " was cancelled by another plugin.");
+            return;
+        }
         
         storage.save(data).thenRun(() -> {
             if (!isAutosave) {
@@ -192,6 +198,14 @@ public class SyncManager {
             data.level = 0;
             data.totalExperience = 0;
         }
+        if (!config.getBoolean("sync.potion_effects", true)) data.potionEffects = null;
+        if (!config.getBoolean("sync.food", true)) {
+            data.foodLevel = 20;
+            data.saturation = 5.0f;
+        }
+        if (!config.getBoolean("sync.game_mode", true)) data.gameMode = "SURVIVAL";
+        if (!config.getBoolean("sync.advancements", true)) data.advancements = null;
+        if (!config.getBoolean("sync.statistics", true)) data.statistics = null;
     }
 
     private boolean isWorldExcluded(String worldName) {

@@ -76,7 +76,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         try {
             if (bukkitVersion.contains("1.21.4") || bukkitVersion.contains("26.1.1")) {
                 this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v26_1.VersionHandlerImpl();
-            } else if (bukkitVersion.startsWith("1.21")) {
+            } else if (bukkitVersion.contains("1.21.1") || bukkitVersion.startsWith("1.21")) {
                 this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1.VersionHandlerImpl();
             } else if (bukkitVersion.startsWith("1.20")) {
                 // Actually, v1_20_R1 might not be implemented yet or has a different name
@@ -166,9 +166,10 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         Bukkit.getConsoleSender().sendMessage("§b |  __/| |_| |  ___) | |  _ <| |___| |___| |_| |  _ <| |_| | |___| |_| |");
         Bukkit.getConsoleSender().sendMessage("§b |_|   |_____/ |____/  |_| \\_\\_____|_____|\\___/|_| \\_\\____/|_____|____/ ");
         Bukkit.getConsoleSender().sendMessage("§b ");
-        Bukkit.getConsoleSender().sendMessage("§8 > §fVersion: §b" + version);
+        Bukkit.getConsoleSender().sendMessage("§8 > §fVersion: §d" + version);
         Bukkit.getConsoleSender().sendMessage("§8 > §fAuthors: §b" + authors);
         Bukkit.getConsoleSender().sendMessage("§8 > §fStatus:  §aRunning on " + Bukkit.getServer().getName());
+        Bukkit.getConsoleSender().sendMessage("§8 > §fUpdate:  §eVersion 26.5 \"Expansion Update\"");
         Bukkit.getConsoleSender().sendMessage("§b");
     }
 

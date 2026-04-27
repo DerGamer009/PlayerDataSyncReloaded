@@ -8,7 +8,7 @@ plugins {
 
 allprojects {
     group = "de.playerdatasync"
-    version = properties["version"] ?: "26.4"
+    version = properties["version"] ?: "26.5"
 
     repositories {
         mavenLocal()
