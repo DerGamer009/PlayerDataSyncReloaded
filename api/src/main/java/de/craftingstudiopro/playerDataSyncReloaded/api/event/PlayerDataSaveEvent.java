@@ -17,7 +17,7 @@ public class PlayerDataSaveEvent extends Event implements Cancellable {
     private boolean cancelled = false;
 
     public PlayerDataSaveEvent(Player player, PlayerData data) {
-        super(true);
+        super();
         this.player = player;
         this.data = data;
     }

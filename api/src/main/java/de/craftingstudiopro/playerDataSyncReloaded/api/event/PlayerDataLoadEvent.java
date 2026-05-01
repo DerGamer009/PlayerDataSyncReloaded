@@ -16,7 +16,7 @@ public class PlayerDataLoadEvent extends Event {
     private final long loadTime;
 
     public PlayerDataLoadEvent(Player player, PlayerData data, long loadTime) {
-        super(true); // Async as it often happens in async tasks
+        super(); // Synchronous as it's triggered on the main thread
         this.player = player;
         this.data = data;
         this.loadTime = loadTime;

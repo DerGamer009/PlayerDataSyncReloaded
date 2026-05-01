@@ -2,6 +2,10 @@
 
 All notable changes to PlayerDataSyncReloaded will be documented in this file.
 
+## [26.5.1-Release] - 2026-05-01
+### Fixed
+- **Thread Safety**: Resolved `IllegalStateException` on Paper/Purpur servers where `PlayerDataSaveEvent` was incorrectly triggered on the main thread while marked as an asynchronous event. Both Save and Load events are now synchronous to ensure full compatibility with the Bukkit threading model.
+
 ## [26.5-Release] - 2026-04-27
 ### Added
 - **API Extensibility**: Added `extraData` map to `PlayerData` for third-party plugin data synchronization.
