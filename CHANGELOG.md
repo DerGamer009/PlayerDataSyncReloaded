@@ -2,6 +2,11 @@
 
 All notable changes to PlayerDataSyncReloaded will be documented in this file.
 
+## [26.5.2-Release] - 2026-05-03
+### Changed
+- **Paper Compatibility**: Updated NMS support for the stable Paper 26.1.2 release.
+- **Dependency Management**: Updated internal version modules to target the latest stable API builds.
+
 ## [26.5.1-Release] - 2026-05-01
 ### Fixed
 - **Thread Safety**: Resolved `IllegalStateException` on Paper/Purpur servers where `PlayerDataSaveEvent` was incorrectly triggered on the main thread while marked as an asynchronous event. Both Save and Load events are now synchronous to ensure full compatibility with the Bukkit threading model.

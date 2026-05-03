@@ -14,6 +14,7 @@ allprojects {
         mavenLocal()
         mavenCentral()
         maven("https://repo.dergamer09.at/releases")
+        maven("https://repo.faststats.dev/releases")
         maven("https://repo.papermc.io/repository/maven-public/")
         maven("https://hub.spigotmc.org/nexus/content/repositories/snapshots/")
         maven("https://repo.codemc.io/repository/maven-public/")

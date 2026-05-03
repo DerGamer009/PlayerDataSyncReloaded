@@ -17,6 +17,9 @@ import org.bukkit.event.player.AsyncPlayerPreLoginEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
+import dev.faststats.bukkit.BukkitMetrics;
+import dev.faststats.core.Metrics;
+
 
 public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener {
 
@@ -26,6 +29,10 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
     private de.craftingstudiopro.playerDataSyncReloaded.common.redis.RedisManager redisManager;
     private net.milkbowl.vault.economy.Economy economy;
     private de.craftingstudiopro.playerDataSyncReloaded.common.BackupManager backupManager;
+    private final Metrics metrics = BukkitMetrics.factory()
+            .token("744d645fca7c2275b2986db7cd58da0c")
+            .create(this);
+
 
     @Override
     public void onEnable() {
@@ -63,6 +70,9 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         // Run Update Checker
         new de.craftingstudiopro.playerDataSyncReloaded.plugin.util.UpdateChecker(this).check();
 
+        metrics.ready();
+
+
         startAutoSaveTask();
 
         getLogger().info("PlayerDataSyncReloaded version " + getDescription().getVersion() + " enabled.");
@@ -74,7 +84,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         getLogger().info("Detected Bukkit Version: " + bukkitVersion);
 
         try {
-            if (bukkitVersion.contains("1.21.4") || bukkitVersion.contains("26.1.1")) {
+            if (bukkitVersion.contains("1.21.4") || bukkitVersion.contains("26.1.1") || bukkitVersion.contains("26.1.2")) {
                 this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v26_1.VersionHandlerImpl();
             } else if (bukkitVersion.contains("1.21.1") || bukkitVersion.startsWith("1.21")) {
                 this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1.VersionHandlerImpl();
@@ -169,7 +179,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         Bukkit.getConsoleSender().sendMessage("§8 > §fVersion: §d" + version);
         Bukkit.getConsoleSender().sendMessage("§8 > §fAuthors: §b" + authors);
         Bukkit.getConsoleSender().sendMessage("§8 > §fStatus:  §aRunning on " + Bukkit.getServer().getName());
-        Bukkit.getConsoleSender().sendMessage("§8 > §fUpdate:  §eVersion 26.5.1 \"Hotfix Update\"");
+        Bukkit.getConsoleSender().sendMessage("§8 > §fUpdate:  §eVersion 26.5.2 \"Paper Stability Update\"");
         Bukkit.getConsoleSender().sendMessage("§b");
     }
 
