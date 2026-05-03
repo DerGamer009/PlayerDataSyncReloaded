@@ -179,7 +179,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         Bukkit.getConsoleSender().sendMessage("§8 > §fVersion: §d" + version);
         Bukkit.getConsoleSender().sendMessage("§8 > §fAuthors: §b" + authors);
         Bukkit.getConsoleSender().sendMessage("§8 > §fStatus:  §aRunning on " + Bukkit.getServer().getName());
-        Bukkit.getConsoleSender().sendMessage("§8 > §fUpdate:  §eVersion 26.5.2 \"Paper Stability Update\"");
+        Bukkit.getConsoleSender().sendMessage("§8 > §fUpdate:  §eVersion 26.5.3 \"Paper Stability Update\"");
         Bukkit.getConsoleSender().sendMessage("§b");
     }
 

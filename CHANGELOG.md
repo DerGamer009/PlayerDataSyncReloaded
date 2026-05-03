@@ -2,7 +2,7 @@
 
 All notable changes to PlayerDataSyncReloaded will be documented in this file.
 
-## [26.5.2-Release] - 2026-05-03
+## [26.5.3-Release] - 2026-05-03
 ### Changed
 - **Paper Compatibility**: Updated NMS support for the stable Paper 26.1.2 release.
 - **Dependency Management**: Updated internal version modules to target the latest stable API builds.
