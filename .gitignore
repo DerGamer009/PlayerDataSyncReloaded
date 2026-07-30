@@ -19,6 +19,9 @@ out/
 *.log
 *.hprof
 *.properties
+# Build config, not local state — these must stay tracked.
+!/gradle.properties
+!/gradle/*.properties
 /tmp/
 
 # OS spezifische Dateien

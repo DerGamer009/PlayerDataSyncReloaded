@@ -2,6 +2,28 @@
 
 All notable changes to PlayerDataSyncReloaded will be documented in this file.
 
+## [26.7-Release] - 2026-07-31
+### Fixed
+- **Economy sync (Vault)**: Balances were never synchronized. `SyncManager#setEconomy` discarded the Vault provider into an unused field, and `PlayerData.balance` was neither captured on quit nor applied on join — the `sync.economy` config toggle had no effect. `SyncManager` now keeps the provider and reads/writes balances through it (via reflection, so `common/` stays free of Bukkit and Vault types). Applying a balance is delta-based: it deposits or withdraws only the difference. `sync.economy: false` now genuinely disables both directions.
+
+### Added
+- **Paper 26.2**: New `v26_2_R1` handler built against `paper-api 26.2`; `setupVersionHandler` recognizes `26.2` servers.
+- **Fabric / Forge 26.2 modules**: `fabric-versions/v26_2_R1` and `forge-versions/v26_2_R1` added alongside the Paper line.
+
+### Changed
+- **Paper 26.1.2**: Bumped to `26.1.2.build.72-stable`.
+- **Gradle 9.6.0**: Required by Fabric Loom 1.15+, which the MC 26.x modules need.
+- **Fabric Loom**: `1.15.5` for the 1.20/1.21 lines, `1.17.12` for the 26.x lines.
+- **Fabric mappings for MC 26.x**: Mojang no longer publishes official mappings for 26.x, and no Yarn build targets it. The 26.x modules therefore map against `yarn 1.21.11+build.6`. Fabric aligned that Yarn release with Mojang's names, so the 26.x adapters use `ServerPlayer`, `CompoundTag`, `StreamCodec`, `Identifier.fromNamespaceAndPath(...)` and `ResourceKey#identifier()` — not the older `ServerPlayerEntity` / `NbtCompound` / `PacketCodec` names still used by the 1.20 and 1.21 modules.
+- **Loom source remapping and decompilation disabled for 26.x** (`fabric.loom.ci=true`, empty `decompilers {}`): the cross-version mapping breaks both, and neither is needed to produce the mod jar.
+
+### Known issues
+- **Forge is not built in this release.** ForgeGradle 6.0.x refuses to run on Gradle 9+ and no compatible release exists yet, so `forge-versions/*` are excluded from the build. The modules remain in the tree and can be re-enabled with `-Ppds.enableForge=true` once ForgeGradle supports Gradle 9.
+
+### Notes
+- Building the MC 26.x modules requires a **JDK 25** Gradle daemon; `gradle/gradle-daemon-jvm.properties` provisions it automatically.
+- Loom prints `The mappings (net.fabricmc:yarn:1.21.11+build.6) were not built for Minecraft version 26.1` during configuration. This warning is expected for the 26.x lines and does not indicate a broken build.
+
 ## [26.6-Release] - 2026-06-14
 ### Changed
 - Published the unified release artifact as `PlayerDataSyncReloaded-26.6-Release.jar`.
