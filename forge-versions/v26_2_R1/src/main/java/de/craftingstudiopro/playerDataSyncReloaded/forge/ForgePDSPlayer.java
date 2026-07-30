@@ -1,14 +1,14 @@
-package de.craftingstudiopro.playerDataSyncReloaded.fabric;
+package de.craftingstudiopro.playerDataSyncReloaded.forge;
 
 import de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer;
 import net.minecraft.server.level.ServerPlayer;
 
 import java.util.UUID;
 
-public class FabricPDSPlayer implements PDSPlayer {
+public class ForgePDSPlayer implements PDSPlayer {
     private final ServerPlayer player;
 
-    public FabricPDSPlayer(ServerPlayer player) {
+    public ForgePDSPlayer(ServerPlayer player) {
         this.player = player;
     }
 
@@ -19,7 +19,7 @@ public class FabricPDSPlayer implements PDSPlayer {
 
     @Override
     public String getName() {
-        return player.getName().getString();
+        return player.getGameProfile().getName();
     }
 
     @Override
@@ -29,6 +29,6 @@ public class FabricPDSPlayer implements PDSPlayer {
 
     @Override
     public String getWorldName() {
-        return player.level().dimension().identifier().toString();
+        return player.level().dimension().location().toString();
     }
 }

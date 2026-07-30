@@ -34,8 +34,7 @@ jobs:
     - name: Notify Bug Tracker (Success)
       if: success()
       run: |
-        # Version aus der root build.gradle.kts extrahieren
-        VERSION=$(grep "version =" build.gradle.kts | head -n 1 | cut -d '"' -f 2)
+        VERSION=$(grep '^version=' gradle.properties | cut -d '=' -f 2-)
         CHANGELOG=$(git log -1 --pretty=%B)
         LOGS=$(cat build.log | tail -c 15000)
         

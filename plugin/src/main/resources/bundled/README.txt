@@ -15,5 +15,5 @@ upload the extracted file from bundled/ (Modrinth does not read nested JARs as l
 
 Paper 1.21.x remapper ("Unsupported class file major version 69"):
   - Remove any OLD jar from plugins/ (e.g. PlayerDataSyncReloaded-26.5.5-SNAPSHOT.jar). Only ONE PDS jar should exist.
-  - Install the jar whose name matches your build (see gradle.properties "version", e.g. PlayerDataSyncReloaded-26.5.5.1-ALPHA.jar).
+  - Install the jar whose name matches your build (see gradle.properties "version", e.g. PlayerDataSyncReloaded-26.6-Release.jar).
   - Rebuild with ./gradlew :plugin:clean :plugin:build after pulling the repo so bytecode is Java 21 + MR layers stripped from the shaded jar.

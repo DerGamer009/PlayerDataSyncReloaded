@@ -1,22 +1,17 @@
-package de.craftingstudiopro.playerDataSyncReloaded.fabric;
+package de.craftingstudiopro.playerDataSyncReloaded.forge;
 
 import de.craftingstudiopro.playerDataSyncReloaded.common.Platform;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraftforge.server.ServerLifecycleHooks;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.logging.Logger;
 
-public class FabricPlatform implements Platform {
-    private final MinecraftServer server;
+public class ForgePlatform implements Platform {
     private final Logger logger = Logger.getLogger("PlayerDataSync");
-
-    public FabricPlatform(MinecraftServer server) {
-        this.server = server;
-    }
 
     @Override
     public Logger getLogger() {
@@ -25,7 +20,8 @@ public class FabricPlatform implements Platform {
 
     @Override
     public void runTask(Runnable task) {
-        server.execute(task);
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        if (server != null) server.execute(task);
     }
 
     @Override
@@ -35,14 +31,18 @@ public class FabricPlatform implements Platform {
 
     @Override
     public boolean isOnline(UUID uuid) {
-        return server.getPlayerList().getPlayer(uuid) != null;
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        return server != null && server.getPlayerList().getPlayer(uuid) != null;
     }
 
     @Override
     public void sendMessage(UUID uuid, String message) {
-        ServerPlayer player = server.getPlayerList().getPlayer(uuid);
-        if (player != null) {
-            player.sendSystemMessage(Component.literal(message.replace("&", "§")));
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        if (server != null) {
+            var player = server.getPlayerList().getPlayer(uuid);
+            if (player != null) {
+                player.sendSystemMessage(Component.literal(message.replace("&", "§")));
+            }
         }
     }
 

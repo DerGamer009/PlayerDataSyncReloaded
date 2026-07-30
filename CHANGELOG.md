@@ -2,6 +2,16 @@
 
 All notable changes to PlayerDataSyncReloaded will be documented in this file.
 
+## [26.6-Release] - 2026-06-14
+### Changed
+- Published the unified release artifact as `PlayerDataSyncReloaded-26.6-Release.jar`.
+- Updated CI and documentation to use the canonical release version and artifact name.
+- Reposilite publishing credentials can now be supplied through `PDS_REPOSILITE_USERNAME` and `PDS_REPOSILITE_PASSWORD`.
+- Incoming Bukkit plugin messages are decoded explicitly as UTF-8.
+
+### Security
+- Removed committed Reposilite credentials from `gradle.properties`.
+
 ## [26.5.5.1-ALPHA] - 2026-05-20
 ### Added
 - **Fabric**: `fabric-api` (`0.92.2+1.20.1`) so lifecycle and server-play networking APIs resolve at compile time; `fabric.mod.json` declares a `fabric-api` dependency.

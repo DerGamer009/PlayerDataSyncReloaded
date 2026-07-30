@@ -8,12 +8,12 @@ plugins {
 
 allprojects {
     group = "de.playerdatasync"
-    version = properties["version"] ?: "26.5-Release"
+    version = properties["version"] ?: "26.6-Release"
 
     repositories {
         mavenLocal()
         mavenCentral()
-        maven("https://repo.dergamer09.at/releases")
+        // maven("https://repo.dergamer09.at/releases") // Disabled: DNS not resolving locally
         maven("https://repo.faststats.dev/releases")
         maven("https://repo.papermc.io/repository/maven-public/")
         maven("https://hub.spigotmc.org/nexus/content/repositories/snapshots/")
@@ -68,8 +68,10 @@ subprojects {
                         name = "Reposilite"
                         url = uri("https://repo.dergamer09.at/releases")
                         credentials {
-                            username = project.findProperty("reposilite_username")?.toString() ?: ""
-                            password = project.findProperty("reposilite_password")?.toString() ?: ""
+                            username = project.findProperty("reposilite_username")?.toString()?.takeIf(String::isNotBlank)
+                                ?: System.getenv("PDS_REPOSILITE_USERNAME").orEmpty()
+                            password = project.findProperty("reposilite_password")?.toString()?.takeIf(String::isNotBlank)
+                                ?: System.getenv("PDS_REPOSILITE_PASSWORD").orEmpty()
                         }
                     }
                 }

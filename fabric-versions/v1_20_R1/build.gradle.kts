@@ -1,6 +1,5 @@
 plugins {
-    // Keep the same Loom version as other :fabric-versions:* modules — mixing Loom 1.6 + 1.8 breaks remapJar (ClassCastException).
-    id("fabric-loom") version "1.8.13"
+    id("fabric-loom") version "1.15.5"
 }
 
 base {

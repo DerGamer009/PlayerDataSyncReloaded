@@ -1,6 +1,5 @@
 plugins {
-    // 1.9.x requires Gradle 8.11+; wrapper stays on 8.10.2 (see gradle-wrapper.properties).
-    id("fabric-loom") version "1.8.13"
+    id("fabric-loom") version "1.15.5"
 }
 
 base {

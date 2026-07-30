@@ -39,8 +39,8 @@ If Forge fails with **Java heap space** while several `:forge-versions:*` projec
 :::tip
 **Finding the Jar**  
 After a successful build, the Paper plugin (with embedded platform JARs under `bundled/`) is copied to:  
-`build/libs/PlayerDataSyncReloaded-<version>.jar`  
-The same file also exists at `plugin/build/libs/PlayerDataSyncReloaded-<version>.jar`.  
+`build/libs/PlayerDataSyncReloaded-<version>.jar`
+The same file also exists at `plugin/build/libs/PlayerDataSyncReloaded-<version>.jar`.
 Extract `bundled/playerdatasync-velocity.jar`, `bundled/playerdatasync-fabric.jar`, or `bundled/playerdatasync-forge.jar` for those loaders. See `pds-docs/modrinth-upload.md`.
 :::
 

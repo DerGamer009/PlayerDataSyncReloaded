@@ -22,6 +22,8 @@ import org.bukkit.scheduler.BukkitTask;
 import dev.faststats.bukkit.BukkitMetrics;
 import dev.faststats.core.Metrics;
 
+import java.nio.charset.StandardCharsets;
+
 
 public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener {
 
@@ -71,7 +73,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         
         getServer().getMessenger().registerOutgoingPluginChannel(this, "pds:sync");
         getServer().getMessenger().registerIncomingPluginChannel(this, "pds:sync", (channel, player, message) -> {
-            String msg = new String(message);
+            String msg = new String(message, StandardCharsets.UTF_8);
             if (msg.startsWith("save:")) {
                 syncManager.handleQuit(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player));
             } else if (msg.startsWith("load:")) {
@@ -111,7 +113,9 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         getLogger().info("Detected Bukkit Version: " + bukkitVersion);
 
         try {
-            if (bukkitVersion.contains("1.21.4") || bukkitVersion.contains("26.1.1") || bukkitVersion.contains("26.1.2")) {
+            if (bukkitVersion.startsWith("26.2")) {
+                this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v26_2.VersionHandlerImpl();
+            } else if (bukkitVersion.contains("1.21.4") || bukkitVersion.contains("26.1.1") || bukkitVersion.contains("26.1.2")) {
                 this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v26_1.VersionHandlerImpl();
             } else if (bukkitVersion.contains("1.21.1") || bukkitVersion.startsWith("1.21")) {
                 this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1.VersionHandlerImpl();
@@ -212,7 +216,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         Bukkit.getConsoleSender().sendMessage("§8 > §fVersion: §d" + version);
         Bukkit.getConsoleSender().sendMessage("§8 > §fAuthors: §b" + authors);
         Bukkit.getConsoleSender().sendMessage("§8 > §fStatus:  §aRunning on " + Bukkit.getServer().getName());
-        Bukkit.getConsoleSender().sendMessage("§8 > §fUpdate:  §eVersion " + version + " \"Alpha Development Build\"");
+        Bukkit.getConsoleSender().sendMessage("§8 > §fChannel: §aRelease");
         Bukkit.getConsoleSender().sendMessage("§b");
     }
 

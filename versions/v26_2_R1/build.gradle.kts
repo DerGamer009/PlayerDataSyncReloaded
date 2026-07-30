@@ -4,7 +4,7 @@ dependencies {
     implementation(project(":api"))
     implementation(project(":common"))
 
-    compileOnly("io.papermc.paper:paper-api:26.1.2.build.72-stable")
+    compileOnly("io.papermc.paper:paper-api:26.2.build.39-alpha")
 }
 
 // paper-api 26.x publishes a JVM-25 library variant; we still emit Java 21 bytecode (--release 21).

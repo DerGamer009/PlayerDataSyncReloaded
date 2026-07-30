@@ -45,7 +45,7 @@ public class SyncManager {
 
     private RedisManager redisManager;
     private DiscordWebhookManager discordManager;
-    private double economyPlaceholder = 0; // Simple placeholder if platform doesn't handle economy
+    private Object economy; // Vault Economy — kept as Object so common/ stays Bukkit/Vault-free; accessed via reflection.
 
     public SyncManager(Platform platform, Storage storage, VersionHandler versionHandler) {
         this.platform = platform;
@@ -92,7 +92,43 @@ public class SyncManager {
     }
 
     public void setEconomy(Object economy) {
-        this.economyPlaceholder = economy != null ? 1.0 : 0.0;
+        this.economy = economy;
+    }
+
+    private double readBalance(PDSPlayer player) {
+        if (economy == null) return 0.0;
+        try {
+            Class<?> offlinePlayerCls = Class.forName("org.bukkit.OfflinePlayer");
+            return ((Number) economy.getClass()
+                    .getMethod("getBalance", offlinePlayerCls)
+                    .invoke(economy, player.getHandle())).doubleValue();
+        } catch (Throwable t) {
+            logger.warning("Failed to read balance for " + player.getName() + ": " + t.getMessage());
+            return 0.0;
+        }
+    }
+
+    private void writeBalance(PDSPlayer player, double target) {
+        if (economy == null) return;
+        try {
+            Class<?> offlinePlayerCls = Class.forName("org.bukkit.OfflinePlayer");
+            Object handle = player.getHandle();
+            double current = ((Number) economy.getClass()
+                    .getMethod("getBalance", offlinePlayerCls)
+                    .invoke(economy, handle)).doubleValue();
+            double delta = target - current;
+            if (delta > 0.0) {
+                economy.getClass()
+                        .getMethod("depositPlayer", offlinePlayerCls, double.class)
+                        .invoke(economy, handle, delta);
+            } else if (delta < 0.0) {
+                economy.getClass()
+                        .getMethod("withdrawPlayer", offlinePlayerCls, double.class)
+                        .invoke(economy, handle, -delta);
+            }
+        } catch (Throwable t) {
+            logger.warning("Failed to write balance for " + player.getName() + ": " + t.getMessage());
+        }
     }
 
     public void handleJoin(PDSPlayer player) {
@@ -139,6 +175,10 @@ public class SyncManager {
         if (platform.isOnline(player.getUniqueId())) {
             try {
                 versionHandler.apply(player, data);
+
+                if (platform.getConfigBoolean("sync.economy", true)) {
+                    writeBalance(player, data.balance);
+                }
 
                 if (data.inventoryContents != null) {
                     inventoryHashes.put(player.getUniqueId(), data.inventoryContents.hashCode());
@@ -193,6 +233,9 @@ public class SyncManager {
 
         saveAttempts.increment();
         PlayerData data = versionHandler.capture(player);
+        if (platform.getConfigBoolean("sync.economy", true)) {
+            data.balance = readBalance(player);
+        }
         filterData(data); // Apply config filters
 
         if (data.inventoryContents != null) {

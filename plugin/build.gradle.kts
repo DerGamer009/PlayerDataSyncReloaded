@@ -11,13 +11,15 @@ val fabricBundle =
     (rootProject.findProperty("pds.fabric.bundle") as String?)?.takeIf { it.isNotBlank() } ?: "v1_20_R1"
 val forgeBundle =
     (rootProject.findProperty("pds.forge.bundle") as String?)?.takeIf { it.isNotBlank() } ?: "v1_20_R1"
+val enableForge =
+    (rootProject.findProperty("pds.enableForge") as String?)?.toBoolean() ?: false
 
 dependencies {
     implementation(project(":api"))
     implementation(project(":common"))
 
     val versionModules = listOf(
-        "v1_20_R1", "v1_21_R1", "v26_1_R1"
+        "v1_20_R1", "v1_21_R1", "v26_1_R1", "v26_2_R1"
     )
 
     versionModules.forEach {
@@ -42,12 +44,15 @@ tasks {
         // Paper 1.21.x PluginRemapper uses ASM that cannot read MR-JAR stacks (e.g. class file 69 under META-INF/versions/).
         exclude("META-INF/versions/**")
 
+        val forgeDeps = if (enableForge)
+            listOf(project(":forge-versions:$forgeBundle").tasks.named("reobfJar")) else emptyList()
+
         dependsOn(
-            project(":velocity").tasks.named("jar"),
-            project(":fabric-versions:$fabricBundle").tasks.named("remapJar"),
-            project(":fabric-versions:$fabricBundle").tasks.named("checkFabricModMetadata"),
-            // reobfJar updates the regular jar in place; it does not always register outputs.files.
-            project(":forge-versions:$forgeBundle").tasks.named("reobfJar"),
+            listOf(
+                project(":velocity").tasks.named("jar"),
+                project(":fabric-versions:$fabricBundle").tasks.named("remapJar"),
+                project(":fabric-versions:$fabricBundle").tasks.named("checkFabricModMetadata"),
+            ) + forgeDeps
         )
 
         from(project(":velocity").tasks.named<Jar>("jar").flatMap { it.archiveFile }) {
@@ -58,9 +63,11 @@ tasks {
             into("bundled")
             rename { _: String -> "playerdatasync-fabric.jar" }
         }
-        from(project(":forge-versions:$forgeBundle").tasks.named<Jar>("jar").flatMap { it.archiveFile }) {
-            into("bundled")
-            rename { _: String -> "playerdatasync-forge.jar" }
+        if (enableForge) {
+            from(project(":forge-versions:$forgeBundle").tasks.named<Jar>("jar").flatMap { it.archiveFile }) {
+                into("bundled")
+                rename { _: String -> "playerdatasync-forge.jar" }
+            }
         }
     }
 
