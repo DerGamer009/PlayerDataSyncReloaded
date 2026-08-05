@@ -39,7 +39,14 @@ public class PlayerDataSyncFabric implements ModInitializer {
     private void setup(MinecraftServer server) {
         this.platform = new FabricPlatform(server);
 
-        this.storage = new SqlStorage(platform.getLogger(), "sqlite", "", 0, "playerdata.db", "", "");
+        this.storage = new SqlStorage(
+                platform.getLogger(),
+                platform.getConfigString("storage.type", "sqlite"),
+                platform.getConfigString("storage.host", ""),
+                parsePort(platform.getConfigString("storage.port", "0")),
+                platform.getConfigString("storage.database", "playerdata.db"),
+                platform.getConfigString("storage.username", ""),
+                platform.getConfigString("storage.password", ""));
         try {
             this.storage.init();
         } catch (Exception e) {
@@ -63,5 +70,14 @@ public class PlayerDataSyncFabric implements ModInitializer {
                 }
             });
         });
+    }
+
+    private int parsePort(String raw) {
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            LOG.warn("storage.port is not a number ('{}'), using 0", raw);
+            return 0;
+        }
     }
 }

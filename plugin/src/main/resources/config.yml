@@ -64,7 +64,7 @@ sync:
   statistics: true
   game_mode: true
   flight: true
-  location: true
+  location: false # Teleports the player to their stored position on join. Off by default: the target server must have a world of the same name.
   attributes: true
   pdc: true # Persistent Data Container
   economy: true # Vault Economy

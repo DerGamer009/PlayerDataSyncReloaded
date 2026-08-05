@@ -1,10 +1,11 @@
 package de.craftingstudiopro.playerDataSyncReloaded.fabric;
 
+import de.craftingstudiopro.playerDataSyncReloaded.common.FileConfig;
 import de.craftingstudiopro.playerDataSyncReloaded.common.Platform;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.text.Text;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.logging.Logger;
@@ -13,8 +14,12 @@ public class FabricPlatform implements Platform {
     private final MinecraftServer server;
     private final Logger logger = Logger.getLogger("PlayerDataSync");
 
+    private final FileConfig config;
+
     public FabricPlatform(MinecraftServer server) {
         this.server = server;
+        this.config = new FileConfig(
+                FabricLoader.getInstance().getConfigDir().resolve("playerdatasync.properties"), logger);
     }
 
     @Override
@@ -38,6 +43,12 @@ public class FabricPlatform implements Platform {
     }
 
     @Override
+    public de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer getPlayer(UUID uuid) {
+        var player = server.getPlayerManager().getPlayer(uuid);
+        return player != null ? new FabricPDSPlayer(player) : null;
+    }
+
+    @Override
     public void sendMessage(UUID uuid, String message) {
         var player = server.getPlayerManager().getPlayer(uuid);
         if (player != null) {
@@ -47,17 +58,16 @@ public class FabricPlatform implements Platform {
 
     @Override
     public String getConfigString(String path, String def) {
-        // Simple config mock for now, Fabric needs a config lib like Cloth Config or Fiber
-        return def;
+        return config.getString(path, def);
     }
 
     @Override
     public boolean getConfigBoolean(String path, boolean def) {
-        return def;
+        return config.getBoolean(path, def);
     }
 
     @Override
     public List<String> getConfigStringList(String path) {
-        return Collections.emptyList();
+        return config.getStringList(path);
     }
 }

@@ -36,6 +36,14 @@ public class ForgePlatform implements Platform {
     }
 
     @Override
+    public de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer getPlayer(UUID uuid) {
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        if (server == null) return null;
+        var player = server.getPlayerList().getPlayer(uuid);
+        return player != null ? new ForgePDSPlayer(player) : null;
+    }
+
+    @Override
     public void sendMessage(UUID uuid, String message) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server != null) {

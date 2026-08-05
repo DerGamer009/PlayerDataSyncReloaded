@@ -173,6 +173,18 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
         } else {
             player.resetPlayerWeather();
         }
+
+        // Location: filterData() nulls worldName unless sync.location is on, so this is the opt-in gate.
+        // The target world only exists if the destination server actually has it loaded.
+        if (data.worldName != null) {
+            org.bukkit.World world = Bukkit.getWorld(data.worldName);
+            if (world == null) {
+                Bukkit.getLogger().warning("[PlayerDataSync] Skipping location restore for " + player.getName()
+                        + ": world '" + data.worldName + "' does not exist on this server.");
+            } else {
+                player.teleport(new Location(world, data.x, data.y, data.z, data.yaw, data.pitch));
+            }
+        }
     }
     
     protected Map<String, Double> captureAttributes(Player player) {

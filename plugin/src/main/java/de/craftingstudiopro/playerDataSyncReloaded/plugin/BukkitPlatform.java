@@ -37,6 +37,12 @@ public class BukkitPlatform implements Platform {
     }
 
     @Override
+    public de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer getPlayer(UUID uuid) {
+        org.bukkit.entity.Player player = Bukkit.getPlayer(uuid);
+        return player != null ? new BukkitPDSPlayer(player) : null;
+    }
+
+    @Override
     public void sendMessage(UUID uuid, String message) {
         org.bukkit.entity.Player player = Bukkit.getPlayer(uuid);
         if (player != null) {

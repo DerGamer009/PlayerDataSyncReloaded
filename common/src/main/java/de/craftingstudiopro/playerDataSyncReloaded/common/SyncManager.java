@@ -43,6 +43,9 @@ public class SyncManager {
     private final AtomicLong lastErrorAt = new AtomicLong(-1L);
     private volatile String lastErrorMessage = "";
 
+    /** Identifies this server on the Redis channel so it can ignore its own published saves. */
+    private final String nodeId = UUID.randomUUID().toString();
+
     private RedisManager redisManager;
     private DiscordWebhookManager discordManager;
     private Object economy; // Vault Economy — kept as Object so common/ stays Bukkit/Vault-free; accessed via reflection.
@@ -70,12 +73,34 @@ public class SyncManager {
     public void setRedisManager(RedisManager redisManager) {
         this.redisManager = redisManager;
         this.redisManager.subscribe(message -> {
-            if (message.startsWith("saved:")) {
-                String uuidStr = message.substring(6);
-                UUID uuid = UUID.fromString(uuidStr);
-                // Implementation depends on platform to find player and trigger handleJoin
-                // For now, we'll assume the platform handles the event or we need a way to find PDSPlayer
+            if (!message.startsWith("saved:")) {
+                return;
             }
+
+            // Format: saved:<uuid>:<nodeId>. The nodeId is absent in messages from pre-26.8 nodes.
+            String[] parts = message.split(":", 3);
+            if (parts.length >= 3 && nodeId.equals(parts[2])) {
+                // Our own publish echoing back. Reloading here would undo the save we just made.
+                return;
+            }
+
+            UUID uuid;
+            try {
+                uuid = UUID.fromString(parts[1]);
+            } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException ex) {
+                logger.warning("Ignoring malformed Redis message: " + message);
+                return;
+            }
+
+            platform.runTask(() -> {
+                PDSPlayer player = platform.getPlayer(uuid);
+                if (player == null) {
+                    // Player is not on this server — nothing to refresh.
+                    return;
+                }
+                logger.info("Redis: reloading data for " + player.getName() + " after remote save.");
+                handleJoin(player);
+            });
         });
     }
 
@@ -261,7 +286,7 @@ public class SyncManager {
             if (!isAutosave) {
                 logger.info("Saved data for player: " + player.getName());
                 if (redisManager != null) {
-                    redisManager.publish("saved:" + player.getUniqueId());
+                    redisManager.publish("saved:" + player.getUniqueId() + ":" + nodeId);
                 }
             }
         }).exceptionally(ex -> {
@@ -286,6 +311,14 @@ public class SyncManager {
             data.saturation = 5.0f;
         }
         if (!platform.getConfigBoolean("sync.game_mode", true)) data.gameMode = "SURVIVAL";
+        if (!platform.getConfigBoolean("sync.flight", true)) {
+            data.isFlying = false;
+            data.canFly = false;
+        }
+        if (!platform.getConfigBoolean("sync.attributes", true)) data.attributes = null;
+        if (!platform.getConfigBoolean("sync.pdc", true)) data.persistentDataContainer = null;
+        // Location restore is opt-in: it teleports on join, so it must never turn on by surprise.
+        if (!platform.getConfigBoolean("sync.location", false)) data.worldName = null;
         if (!platform.getConfigBoolean("sync.advancements", true)) data.advancements = null;
         if (!platform.getConfigBoolean("sync.statistics", true)) data.statistics = null;
         if (!platform.getConfigBoolean("sync.air_level", true)) data.airLevel = 300;
