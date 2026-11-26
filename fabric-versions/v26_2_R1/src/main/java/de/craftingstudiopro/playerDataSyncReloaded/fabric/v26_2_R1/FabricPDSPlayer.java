@@ -1,20 +1,20 @@
-package de.craftingstudiopro.playerDataSyncReloaded.fabric;
+package de.craftingstudiopro.playerDataSyncReloaded.fabric.v26_2_R1;
 
 import de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer;
-import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.level.ServerPlayer;
 
 import java.util.UUID;
 
 public class FabricPDSPlayer implements PDSPlayer {
-    private final ServerPlayerEntity player;
+    private final ServerPlayer player;
 
-    public FabricPDSPlayer(ServerPlayerEntity player) {
+    public FabricPDSPlayer(ServerPlayer player) {
         this.player = player;
     }
 
     @Override
     public UUID getUniqueId() {
-        return player.getUuid();
+        return player.getUUID();
     }
 
     @Override
@@ -29,6 +29,6 @@ public class FabricPDSPlayer implements PDSPlayer {
 
     @Override
     public String getWorldName() {
-        return player.getWorld().getRegistryKey().getValue().toString();
+        return player.level().dimension().identifier().toString();
     }
 }

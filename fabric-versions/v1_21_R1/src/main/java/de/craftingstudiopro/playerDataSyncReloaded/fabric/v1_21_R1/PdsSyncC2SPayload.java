@@ -1,4 +1,4 @@
-package de.craftingstudiopro.playerDataSyncReloaded.fabric;
+package de.craftingstudiopro.playerDataSyncReloaded.fabric.v1_21_R1;
 
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;

@@ -1,4 +1,4 @@
-package de.craftingstudiopro.playerDataSyncReloaded.fabric;
+package de.craftingstudiopro.playerDataSyncReloaded.fabric.v1_20_R1;
 
 import de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer;
 import net.minecraft.server.network.ServerPlayerEntity;

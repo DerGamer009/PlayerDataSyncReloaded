@@ -1,10 +1,11 @@
-package de.craftingstudiopro.playerDataSyncReloaded.fabric;
+package de.craftingstudiopro.playerDataSyncReloaded.fabric.v26_1_R1;
 
 import de.craftingstudiopro.playerDataSyncReloaded.common.FileConfig;
 import de.craftingstudiopro.playerDataSyncReloaded.common.Platform;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.text.Text;
+import net.minecraft.server.level.ServerPlayer;
 
 import java.util.List;
 import java.util.UUID;
@@ -13,7 +14,6 @@ import java.util.logging.Logger;
 public class FabricPlatform implements Platform {
     private final MinecraftServer server;
     private final Logger logger = Logger.getLogger("PlayerDataSync");
-
     private final FileConfig config;
 
     public FabricPlatform(MinecraftServer server) {
@@ -34,25 +34,25 @@ public class FabricPlatform implements Platform {
 
     @Override
     public void runTaskAsync(Runnable task) {
-        new Thread(task).start(); // Simple async for Fabric
+        new Thread(task).start();
     }
 
     @Override
     public boolean isOnline(UUID uuid) {
-        return server.getPlayerManager().getPlayer(uuid) != null;
+        return server.getPlayerList().getPlayer(uuid) != null;
     }
 
     @Override
     public de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer getPlayer(UUID uuid) {
-        var player = server.getPlayerManager().getPlayer(uuid);
+        ServerPlayer player = server.getPlayerList().getPlayer(uuid);
         return player != null ? new FabricPDSPlayer(player) : null;
     }
 
     @Override
     public void sendMessage(UUID uuid, String message) {
-        var player = server.getPlayerManager().getPlayer(uuid);
+        ServerPlayer player = server.getPlayerList().getPlayer(uuid);
         if (player != null) {
-            player.sendMessage(Text.literal(message.replace("&", "§")), false);
+            player.sendSystemMessage(Component.literal(message.replace("&", "§")));
         }
     }
 

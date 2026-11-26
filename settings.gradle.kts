@@ -18,6 +18,8 @@ include("api")
 include("common")
 include("plugin")
 include("velocity")
+// Single Fabric jar that bundles every :fabric-versions:* adapter
+include("fabric")
 
 // Version modules (Paper NMS handlers + Fabric/Forge adapters per line)
 val versionModules = listOf(

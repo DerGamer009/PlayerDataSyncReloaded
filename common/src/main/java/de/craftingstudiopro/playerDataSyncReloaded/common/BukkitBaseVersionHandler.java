@@ -101,7 +101,10 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
     public void apply(PDSPlayer pdsPlayer, PlayerData data) {
         Player player = (Player) pdsPlayer.getHandle();
         // Stats
-        player.setHealth(Math.min(data.health, getMaxHealth(player)));
+        // A player who left on the death screen is stored with 0 health; applying it kills them again.
+        if (data.health > 0) {
+            player.setHealth(Math.min(data.health, getMaxHealth(player)));
+        }
         player.setFoodLevel(data.foodLevel);
         player.setSaturation(data.saturation);
         player.setExhaustion(data.exhaustion);

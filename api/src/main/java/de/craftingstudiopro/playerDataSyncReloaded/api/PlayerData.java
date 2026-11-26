@@ -10,6 +10,8 @@ public class PlayerData implements Serializable {
 
     public UUID uuid;
     public String name;
+    /** When this record was saved, epoch millis. 0 in records from versions before 26.9-Release. */
+    public long savedAt;
     public int arrowsInBody;
 
     // Items

@@ -186,7 +186,7 @@ public class SqlStorage implements Storage {
                     try {
                         jsonData = CryptoUtil.encrypt(jsonData, encryptionKey);
                     } catch (Exception e) {
-                        logger.severe("CRITICAL: Failed to encrypt personal data for " + data.uuid);
+                        throw new IllegalStateException("Failed to encrypt player data for " + data.uuid + "; refusing to store it unencrypted", e);
                     }
                 }
 
@@ -196,6 +196,7 @@ public class SqlStorage implements Storage {
                 ps.executeUpdate();
             } catch (SQLException e) {
                 logger.log(Level.SEVERE, "Could not save player data for " + data.uuid, e);
+                throw new IllegalStateException("Could not save player data for " + data.uuid, e);
             }
         }, dbExecutor);
     }

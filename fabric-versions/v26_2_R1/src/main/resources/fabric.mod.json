@@ -16,7 +16,7 @@
   "environment": "*",
   "entrypoints": {
     "main": [
-      "de.craftingstudiopro.playerDataSyncReloaded.fabric.PlayerDataSyncFabric"
+      "de.craftingstudiopro.playerDataSyncReloaded.fabric.v26_2_R1.PlayerDataSyncFabric"
     ]
   },
   "depends": {

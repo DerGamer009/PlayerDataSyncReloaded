@@ -83,13 +83,13 @@ public class MongoStorage implements Storage {
                     collection.replaceOne(eq("_id", data.uuid.toString()), doc, new ReplaceOptions().upsert(true));
                     return;
                 } catch (Exception e) {
-                    logger.severe("CRITICAL: Failed to encrypt personal data for " + data.uuid);
+                    throw new IllegalStateException("Failed to encrypt player data for " + data.uuid + "; refusing to store it unencrypted", e);
                 }
+            } else {
+                Document doc = Document.parse(jsonData);
+                doc.put("_id", data.uuid.toString());
+                collection.replaceOne(eq("_id", data.uuid.toString()), doc, new ReplaceOptions().upsert(true));
             }
-
-            Document doc = Document.parse(jsonData);
-            doc.put("_id", data.uuid.toString());
-            collection.replaceOne(eq("_id", data.uuid.toString()), doc, new ReplaceOptions().upsert(true));
         }, dbExecutor);
     }
 

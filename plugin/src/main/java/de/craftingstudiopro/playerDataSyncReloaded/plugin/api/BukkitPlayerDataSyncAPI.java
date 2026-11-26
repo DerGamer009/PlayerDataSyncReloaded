@@ -54,7 +54,7 @@ public class BukkitPlayerDataSyncAPI implements PlayerDataSyncAPI {
             }
 
             try {
-                plugin.getSyncManager().handleJoin(new BukkitPDSPlayer(player));
+                plugin.getSyncManager().handleJoin(new BukkitPDSPlayer(player), true);
                 future.complete(null);
             } catch (Exception ex) {
                 future.completeExceptionally(ex);

@@ -7,6 +7,7 @@ import de.craftingstudiopro.playerDataSyncReloaded.common.redis.RedisManager;
 import de.craftingstudiopro.playerDataSyncReloaded.common.storage.Storage;
 import de.craftingstudiopro.playerDataSyncReloaded.common.util.DiscordWebhookManager;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -25,7 +26,14 @@ public class SyncManager {
     private final VersionHandler versionHandler;
     private final Logger logger;
     private final ConcurrentHashMap<UUID, Boolean> syncInProgress = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<UUID, Integer> inventoryHashes = new ConcurrentHashMap<>();
+    /** A load requested while one is running; the value is true if any of the requests was forced. */
+    private final ConcurrentHashMap<UUID, Boolean> reloadRequested = new ConcurrentHashMap<>();
+    /** Players whose stored record has been applied on this server. Saves are refused for everyone else. */
+    private final Set<UUID> loaded = ConcurrentHashMap.newKeySet();
+    /** savedAt of the record this server applied, so the same record is not applied twice. */
+    private final ConcurrentHashMap<UUID, Long> appliedSavedAt = new ConcurrentHashMap<>();
+    /** Serialized inventory last saved or applied; an identical inventory skips the save. */
+    private final ConcurrentHashMap<UUID, String> lastSavedInventory = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, Long> lastSaveMillis = new ConcurrentHashMap<>();
     private final Set<String> excludedWorlds = ConcurrentHashMap.newKeySet();
 
@@ -157,31 +165,48 @@ public class SyncManager {
     }
 
     public void handleJoin(PDSPlayer player) {
+        handleJoin(player, false);
+    }
+
+    /**
+     * Loads the stored record and applies it. Loads are queued per player: a load requested while
+     * another one is running starts afterwards, so the newest record is applied last.
+     *
+     * @param force apply the record even if it is the one already applied ({@code /pds load}, API)
+     */
+    public void handleJoin(PDSPlayer player, boolean force) {
+        UUID uuid = player.getUniqueId();
         if (isWorldExcluded(player.getWorldName())) {
             skippedByWorld.increment();
+            loaded.add(uuid);
             logger.info("Skipped loading for " + player.getName() + " in excluded world " + player.getWorldName());
             return;
         }
 
-        loadAttempts.increment();
-        syncInProgress.put(player.getUniqueId(), true);
+        if (syncInProgress.putIfAbsent(uuid, true) != null) {
+            reloadRequested.merge(uuid, force, Boolean::logicalOr);
+            return;
+        }
 
+        loadAttempts.increment();
         String syncStarted = platform.getConfigString("messages.sync_started", "&7Syncing your data...");
-        if (!syncStarted.isEmpty()) {
+        // Only on the first load: the proxy and Redis trigger further loads for players already in sync.
+        if (!syncStarted.isEmpty() && !loaded.contains(uuid)) {
             platform.sendMessage(player.getUniqueId(), syncStarted);
         }
 
         long startTime = System.currentTimeMillis();
-        storage.load(player.getUniqueId()).thenAccept(optionalData -> {
+        storage.load(uuid).thenAccept(optionalData -> {
             if (optionalData.isPresent()) {
                 PlayerData data = optionalData.get();
-                platform.runTask(() -> applyData(player, data, startTime));
+                platform.runTask(() -> applyData(player, data, startTime, force));
             } else {
-                syncInProgress.remove(player.getUniqueId());
+                loaded.add(uuid);
                 loadSuccess.increment();
+                finishLoad(player);
             }
         }).exceptionally(ex -> {
-            syncInProgress.remove(player.getUniqueId());
+            finishLoad(player);
             loadFailed.increment();
             trackError("load data for " + player.getName(), ex);
             String syncFailed = platform.getConfigString("messages.sync_failed", "&cFailed to sync your data. Please contact an admin.");
@@ -196,17 +221,43 @@ public class SyncManager {
         });
     }
 
-    private void applyData(PDSPlayer player, PlayerData data, long startTime) {
-        if (platform.isOnline(player.getUniqueId())) {
+    private void finishLoad(PDSPlayer player) {
+        UUID uuid = player.getUniqueId();
+        syncInProgress.remove(uuid);
+        Boolean force = reloadRequested.remove(uuid);
+        if (force != null) {
+            platform.runTask(() -> {
+                if (platform.isOnline(uuid)) {
+                    handleJoin(player, force);
+                }
+            });
+        }
+    }
+
+    private void applyData(PDSPlayer player, PlayerData data, long startTime, boolean force) {
+        UUID uuid = player.getUniqueId();
+        if (platform.isOnline(uuid)) {
+            Long applied = appliedSavedAt.get(uuid);
+            if (!force && data.savedAt != 0L && applied != null && applied == data.savedAt) {
+                // A late Redis notification for a record we already have; applying it again would
+                // undo what the player did since.
+                loadSuccess.increment();
+                logger.info("Skipped reload for " + player.getName() + ": stored data is already applied.");
+                finishLoad(player);
+                return;
+            }
+
             try {
                 versionHandler.apply(player, data);
+                appliedSavedAt.put(uuid, data.savedAt);
+                loaded.add(uuid);
 
                 if (platform.getConfigBoolean("sync.economy", true)) {
                     writeBalance(player, data.balance);
                 }
 
                 if (data.inventoryContents != null) {
-                    inventoryHashes.put(player.getUniqueId(), data.inventoryContents.hashCode());
+                    lastSavedInventory.put(uuid, data.inventoryContents);
                 }
 
                 long duration = System.currentTimeMillis() - startTime;
@@ -227,22 +278,54 @@ public class SyncManager {
                 trackError("apply data for " + player.getName(), ex);
             }
         }
-        syncInProgress.remove(player.getUniqueId());
+        finishLoad(player);
     }
 
-    public void handleQuit(PDSPlayer player) {
-        handleQuit(player, false);
+    public CompletableFuture<Void> handleQuit(PDSPlayer player) {
+        return handleQuit(player, false);
     }
 
-    public void handleQuit(PDSPlayer player, boolean isAutosave) {
+    /** The player left this server: save, then forget the per-session state. */
+    public CompletableFuture<Void> handleDisconnect(PDSPlayer player) {
+        CompletableFuture<Void> save = handleQuit(player, false);
+        UUID uuid = player.getUniqueId();
+        loaded.remove(uuid);
+        appliedSavedAt.remove(uuid);
+        reloadRequested.remove(uuid);
+        return save;
+    }
+
+    /** Treats the player's current state as applied, e.g. for players online during {@code /pds reload}. */
+    public void markLoaded(PDSPlayer player) {
+        loaded.add(player.getUniqueId());
+    }
+
+    /** Saves every given player; used on shutdown and reload. Failures do not fail the returned future. */
+    public CompletableFuture<Void> saveAll(Iterable<PDSPlayer> players) {
+        List<CompletableFuture<Void>> saves = new ArrayList<>();
+        for (PDSPlayer player : players) {
+            saves.add(handleQuit(player, false).exceptionally(ex -> null));
+        }
+        return CompletableFuture.allOf(saves.toArray(new CompletableFuture[0]));
+    }
+
+    public CompletableFuture<Void> handleQuit(PDSPlayer player, boolean isAutosave) {
         if (isWorldExcluded(player.getWorldName())) {
             skippedByWorld.increment();
             logger.info("Skipped saving for " + player.getName() + " in excluded world " + player.getWorldName());
-            return;
+            return CompletableFuture.completedFuture(null);
         }
 
         if (isSyncInProgress(player.getUniqueId())) {
-            logger.warning("Player " + player.getName() + " quit while sync was still in progress!");
+            logger.warning("Skipped saving for " + player.getName() + ": data load still in progress.");
+            return CompletableFuture.completedFuture(null);
+        }
+
+        if (!loaded.contains(player.getUniqueId())) {
+            // Saving now would write this server's local player data, the state from the player's
+            // last visit, over the record the previous server just saved.
+            logger.warning("Skipped saving for " + player.getName() + ": stored data was never applied on this server (load failed?).");
+            return CompletableFuture.completedFuture(null);
         }
 
         long now = System.currentTimeMillis();
@@ -252,36 +335,37 @@ public class SyncManager {
             Long lastSaved = lastSaveMillis.get(player.getUniqueId());
             if (lastSaved != null && now - lastSaved < minSaveIntervalMs) {
                 skippedByCooldown.increment();
-                return;
+                return CompletableFuture.completedFuture(null);
             }
         }
 
         saveAttempts.increment();
         PlayerData data = versionHandler.capture(player);
+        data.savedAt = System.currentTimeMillis();
         if (platform.getConfigBoolean("sync.economy", true)) {
             data.balance = readBalance(player);
         }
         filterData(data); // Apply config filters
 
         if (data.inventoryContents != null) {
-            int currentHash = data.inventoryContents.hashCode();
-            Integer lastHash = inventoryHashes.get(player.getUniqueId());
-            if (lastHash != null && lastHash == currentHash && !platform.getConfigBoolean("sync.force_save_on_quit", false)) {
+            // Compare the full serialized inventory: a hash collision must not drop a changed inventory.
+            if (data.inventoryContents.equals(lastSavedInventory.get(player.getUniqueId()))
+                    && !platform.getConfigBoolean("sync.force_save_on_quit", false)) {
                 skippedByHash.increment();
-                return;
+                return CompletableFuture.completedFuture(null);
             }
         } else {
-            inventoryHashes.remove(player.getUniqueId());
+            lastSavedInventory.remove(player.getUniqueId());
         }
 
         long startTime = System.currentTimeMillis();
-        storage.save(data).thenRun(() -> {
+        return storage.save(data).thenRun(() -> {
             long duration = System.currentTimeMillis() - startTime;
             lastSaveDurationMs.set(duration);
             saveSuccess.increment();
             lastSaveMillis.put(player.getUniqueId(), System.currentTimeMillis());
             if (data.inventoryContents != null) {
-                inventoryHashes.put(player.getUniqueId(), data.inventoryContents.hashCode());
+                lastSavedInventory.put(player.getUniqueId(), data.inventoryContents);
             }
             if (!isAutosave) {
                 logger.info("Saved data for player: " + player.getName());
@@ -289,11 +373,22 @@ public class SyncManager {
                     redisManager.publish("saved:" + player.getUniqueId() + ":" + nodeId);
                 }
             }
-        }).exceptionally(ex -> {
-            saveFailed.increment();
-            trackError("save data for " + player.getName(), ex);
-            return null;
+        }).whenComplete((unused, ex) -> {
+            if (ex != null) {
+                saveFailed.increment();
+                trackError("save data for " + player.getName(), ex);
+            }
         });
+    }
+
+    public PlayerSyncState getPlayerState(UUID uuid) {
+        return new PlayerSyncState(
+                loaded.contains(uuid),
+                isSyncInProgress(uuid),
+                reloadRequested.containsKey(uuid),
+                appliedSavedAt.getOrDefault(uuid, 0L),
+                lastSaveMillis.getOrDefault(uuid, 0L)
+        );
     }
 
     private void filterData(PlayerData data) {
@@ -388,6 +483,23 @@ public class SyncManager {
             return Long.parseLong(value.trim());
         } catch (NumberFormatException ignored) {
             return defaultValue;
+        }
+    }
+
+    /** Per-player state shown by {@code /pds info}. */
+    public static final class PlayerSyncState {
+        public final boolean loaded;
+        public final boolean syncInProgress;
+        public final boolean reloadQueued;
+        public final long appliedSavedAt;
+        public final long lastSavedAt;
+
+        public PlayerSyncState(boolean loaded, boolean syncInProgress, boolean reloadQueued, long appliedSavedAt, long lastSavedAt) {
+            this.loaded = loaded;
+            this.syncInProgress = syncInProgress;
+            this.reloadQueued = reloadQueued;
+            this.appliedSavedAt = appliedSavedAt;
+            this.lastSavedAt = lastSavedAt;
         }
     }
 

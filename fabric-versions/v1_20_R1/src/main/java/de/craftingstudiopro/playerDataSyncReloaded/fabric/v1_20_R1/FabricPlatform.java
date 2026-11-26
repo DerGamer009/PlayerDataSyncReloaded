@@ -1,4 +1,4 @@
-package de.craftingstudiopro.playerDataSyncReloaded.fabric;
+package de.craftingstudiopro.playerDataSyncReloaded.fabric.v1_20_R1;
 
 import de.craftingstudiopro.playerDataSyncReloaded.common.FileConfig;
 import de.craftingstudiopro.playerDataSyncReloaded.common.Platform;

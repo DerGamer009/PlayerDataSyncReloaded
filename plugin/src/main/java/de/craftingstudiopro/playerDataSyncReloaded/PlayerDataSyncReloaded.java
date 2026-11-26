@@ -11,6 +11,7 @@ import de.craftingstudiopro.playerDataSyncReloaded.plugin.api.BukkitPlayerDataSy
 // import de.craftingstudiopro.playerDataSyncReloaded.v26_1.VersionHandlerImpl;
 import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.entity.Player;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -23,6 +24,8 @@ import dev.faststats.bukkit.BukkitMetrics;
 import dev.faststats.core.Metrics;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 
 public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener {
@@ -75,7 +78,14 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         getServer().getMessenger().registerIncomingPluginChannel(this, "pds:sync", (channel, player, message) -> {
             String msg = new String(message, StandardCharsets.UTF_8);
             if (msg.startsWith("save:")) {
-                syncManager.handleQuit(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player));
+                // Save handshake: answer once the save has finished, failed or was skipped, so the
+                // proxy can let the player connect to the next server.
+                syncManager.handleQuit(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player)).whenComplete((unused, ex) ->
+                        Bukkit.getScheduler().runTask(this, () -> {
+                            if (player.isOnline()) {
+                                player.sendPluginMessage(this, "pds:sync", ("saved:" + player.getUniqueId()).getBytes(StandardCharsets.UTF_8));
+                            }
+                        }));
             } else if (msg.startsWith("load:")) {
                 syncManager.handleJoin(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player));
             }
@@ -226,6 +236,8 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
             autoSaveTask.cancel();
             autoSaveTask = null;
         }
+        // Paper disables plugins before it kicks the players, so the quit event never saves them.
+        saveOnlinePlayers();
         if (storage != null) {
             storage.close();
         }
@@ -304,7 +316,22 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onQuit(PlayerQuitEvent event) {
-        syncManager.handleQuit(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(event.getPlayer()));
+        syncManager.handleDisconnect(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(event.getPlayer()));
+    }
+
+    /** Saves every online player; storage.close() then waits for the pending writes. */
+    private void saveOnlinePlayers() {
+        if (syncManager == null) {
+            return;
+        }
+        List<de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer> players = new ArrayList<>();
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            players.add(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player));
+        }
+        if (!players.isEmpty()) {
+            getLogger().info("Saving data for " + players.size() + " online player(s)...");
+            syncManager.saveAll(players);
+        }
     }
 
     public void reloadPlugin() {
@@ -312,6 +339,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
             autoSaveTask.cancel();
             autoSaveTask = null;
         }
+        saveOnlinePlayers();
         if (storage != null) {
             storage.close();
         }
@@ -334,6 +362,10 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
 
         this.platform = new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPlatform(this);
         this.syncManager = new SyncManager(this.platform, storage, versionHandler);
+        // The new SyncManager has never loaded these players; without this every save would be refused.
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            syncManager.markLoaded(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player));
+        }
         this.backupManager = new de.craftingstudiopro.playerDataSyncReloaded.common.BackupManager(getLogger(), storage, new java.io.File(getDataFolder(), "backups"));
         this.api = new BukkitPlayerDataSyncAPI(this);
         getServer().getServicesManager().unregisterAll(this);
