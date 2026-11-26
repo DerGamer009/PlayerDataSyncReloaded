@@ -94,6 +94,7 @@ class SyncManagerSwitchTest {
     static final class Server implements Platform, VersionHandler {
         final String name;
         final Map<UUID, String> inventory = new ConcurrentHashMap<>();
+        final Map<UUID, String> gameMode = new ConcurrentHashMap<>();
         final Set<UUID> online = ConcurrentHashMap.newKeySet();
         final Map<String, String> config = new HashMap<>();
         final List<String> log = new ArrayList<>();
@@ -140,9 +141,15 @@ class SyncManagerSwitchTest {
             data.name = player.getName();
             data.health = 20;
             data.inventoryContents = inventory.get(player.getUniqueId());
+            data.gameMode = gameMode.getOrDefault(player.getUniqueId(), "SURVIVAL");
             return data;
         }
-        @Override public void apply(PDSPlayer player, PlayerData data) { inventory.put(player.getUniqueId(), data.inventoryContents); }
+        @Override
+        public void apply(PDSPlayer player, PlayerData data) {
+            // Mirrors BukkitBaseVersionHandler: only synced values are applied.
+            if (data.isSynced("inventory")) inventory.put(player.getUniqueId(), data.inventoryContents);
+            if (data.isSynced("game_mode") && data.gameMode != null) gameMode.put(player.getUniqueId(), data.gameMode);
+        }
         @Override public String serializeInventory(PDSPlayer player) { return inventory.get(player.getUniqueId()); }
         @Override public void deserializeInventory(PDSPlayer player, String data) { inventory.put(player.getUniqueId(), data); }
         @Override public void setItemExclusions(List<String> exclusions) {}
@@ -330,5 +337,57 @@ class SyncManagerSwitchTest {
         data.inventoryContents = inventory;
         data.savedAt = 42L;
         return data;
+    }
+
+    @Test
+    void disabledToggleOnSaverIsNotAppliedElsewhere() throws Exception {
+        // Issue #7: A does not sync game mode; its placeholder "SURVIVAL" must not reach B.
+        a.config.put("sync.game_mode", "false");
+        a.join(steve);
+        a.gameMode.put(steve, "CREATIVE");
+        a.inventory.put(steve, "sword");
+        a.quit(steve);
+
+        PlayerData stored = storage.load(steve).get(5, TimeUnit.SECONDS).orElseThrow();
+        assertTrue(stored.notSynced.contains("game_mode"));
+        assertEquals("SURVIVAL", stored.gameMode, "placeholder kept for servers before 26.12-Alpha.2");
+
+        b.gameMode.put(steve, "ADVENTURE"); // forced by B's server.properties
+        b.join(steve);
+        assertEquals("ADVENTURE", b.gameMode.get(steve), "B keeps its own game mode");
+        assertEquals("sword", b.inventory.get(steve), "synced values are still applied");
+    }
+
+    @Test
+    void disabledToggleOnLoaderIsNotApplied() throws Exception {
+        a.join(steve);
+        a.gameMode.put(steve, "CREATIVE");
+        a.inventory.put(steve, "sword");
+        a.quit(steve);
+
+        b.config.put("sync.game_mode", "false");
+        b.gameMode.put(steve, "ADVENTURE");
+        b.join(steve);
+        assertEquals("ADVENTURE", b.gameMode.get(steve));
+        assertEquals("sword", b.inventory.get(steve));
+    }
+
+    @Test
+    void oldRecordsWithoutMarkerApplyEverything() {
+        PlayerData old = record(steve, "x");
+        assertTrue(old.isSynced("game_mode"));
+        assertTrue(old.isSynced("experience"));
+    }
+
+    @Test
+    void worldNamesMapBetweenPlatforms() {
+        assertEquals(WorldNames.OVERWORLD, WorldNames.toDimensionId("world"));
+        assertEquals(WorldNames.NETHER, WorldNames.toDimensionId("world_nether"));
+        assertEquals(WorldNames.END, WorldNames.toDimensionId("world_the_end"));
+        assertEquals("minecraft:overworld", WorldNames.toDimensionId("minecraft:overworld"));
+        assertEquals(null, WorldNames.toDimensionId("lobby"));
+        assertEquals("NETHER", WorldNames.environmentFor("minecraft:the_nether"));
+        assertEquals("NORMAL", WorldNames.environmentFor("world"));
+        assertEquals(null, WorldNames.environmentFor("mymod:mining"));
     }
 }

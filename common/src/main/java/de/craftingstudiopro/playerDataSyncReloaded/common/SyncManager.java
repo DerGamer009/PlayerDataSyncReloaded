@@ -290,6 +290,7 @@ public class SyncManager {
             }
 
             try {
+                filterForApply(data);
                 versionHandler.apply(player, data);
                 appliedSavedAt.put(uuid, data.savedAt);
                 basisSavedAt.put(uuid, data.savedAt);
@@ -301,11 +302,11 @@ public class SyncManager {
                 loadRetries.remove(uuid);
                 loaded.add(uuid);
 
-                if (platform.getConfigBoolean("sync.economy", true)) {
+                if (data.isSynced("economy")) {
                     writeBalance(player, data.balance);
                 }
 
-                if (data.inventoryContents != null) {
+                if (data.inventoryContents != null && data.isSynced("inventory")) {
                     lastSavedInventory.put(uuid, data.inventoryContents);
                 }
 
@@ -551,43 +552,77 @@ public class SyncManager {
         );
     }
 
+    /**
+     * Sync keys of {@code sync.*}. When one is off, the saving server stores a placeholder (kept for
+     * servers older than 26.12-Alpha.2) and marks the key in {@link PlayerData#notSynced}, so newer
+     * servers do not apply the placeholder over the player's own value.
+     */
+    static final String[] SYNC_KEYS = {
+            "inventory", "ender_chest", "health", "experience", "potion_effects", "food", "game_mode",
+            "flight", "attributes", "pdc", "advancements", "statistics", "air_level", "fire_ticks",
+            "player_time", "player_weather", "freeze_ticks", "arrows_in_body", "absorption", "speeds",
+            "fall_distance", "economy"
+    };
+
+    private boolean syncEnabled(String key) {
+        return platform.getConfigBoolean("sync." + key, true);
+    }
+
     private void filterData(PlayerData data) {
-        if (!platform.getConfigBoolean("sync.inventory", true)) data.inventoryContents = null;
-        if (!platform.getConfigBoolean("sync.ender_chest", true)) data.enderChestContents = null;
-        if (!platform.getConfigBoolean("sync.health", true)) data.health = 20.0;
-        if (!platform.getConfigBoolean("sync.experience", true)) {
+        for (String key : SYNC_KEYS) {
+            if (!syncEnabled(key)) {
+                data.markNotSynced(key);
+            }
+        }
+        if (!syncEnabled("inventory")) data.inventoryContents = null;
+        if (!syncEnabled("ender_chest")) data.enderChestContents = null;
+        if (!syncEnabled("health")) data.health = 20.0;
+        if (!syncEnabled("experience")) {
             data.exp = 0;
             data.level = 0;
             data.totalExperience = 0;
         }
-        if (!platform.getConfigBoolean("sync.potion_effects", true)) data.potionEffects = null;
-        if (!platform.getConfigBoolean("sync.food", true)) {
+        if (!syncEnabled("potion_effects")) data.potionEffects = null;
+        if (!syncEnabled("food")) {
             data.foodLevel = 20;
             data.saturation = 5.0f;
         }
-        if (!platform.getConfigBoolean("sync.game_mode", true)) data.gameMode = "SURVIVAL";
-        if (!platform.getConfigBoolean("sync.flight", true)) {
+        if (!syncEnabled("game_mode")) data.gameMode = "SURVIVAL";
+        if (!syncEnabled("flight")) {
             data.isFlying = false;
             data.canFly = false;
         }
-        if (!platform.getConfigBoolean("sync.attributes", true)) data.attributes = null;
-        if (!platform.getConfigBoolean("sync.pdc", true)) data.persistentDataContainer = null;
+        if (!syncEnabled("attributes")) data.attributes = null;
+        if (!syncEnabled("pdc")) data.persistentDataContainer = null;
         // Location restore is opt-in: it teleports on join, so it must never turn on by surprise.
         if (!platform.getConfigBoolean("sync.location", false)) data.worldName = null;
-        if (!platform.getConfigBoolean("sync.advancements", true)) data.advancements = null;
-        if (!platform.getConfigBoolean("sync.statistics", true)) data.statistics = null;
-        if (!platform.getConfigBoolean("sync.air_level", true)) data.airLevel = 300;
-        if (!platform.getConfigBoolean("sync.fire_ticks", true)) data.fireTicks = 0;
-        if (!platform.getConfigBoolean("sync.player_time", true)) data.playerTime = -1;
-        if (!platform.getConfigBoolean("sync.player_weather", true)) data.playerWeather = null;
-        if (!platform.getConfigBoolean("sync.freeze_ticks", true)) data.freezeTicks = 0;
-        if (!platform.getConfigBoolean("sync.arrows_in_body", true)) data.arrowsInBody = 0;
-        if (!platform.getConfigBoolean("sync.absorption", true)) data.absorptionAmount = 0.0;
-        if (!platform.getConfigBoolean("sync.speeds", true)) {
+        if (!syncEnabled("advancements")) data.advancements = null;
+        if (!syncEnabled("statistics")) data.statistics = null;
+        if (!syncEnabled("air_level")) data.airLevel = 300;
+        if (!syncEnabled("fire_ticks")) data.fireTicks = 0;
+        if (!syncEnabled("player_time")) data.playerTime = -1;
+        if (!syncEnabled("player_weather")) data.playerWeather = null;
+        if (!syncEnabled("freeze_ticks")) data.freezeTicks = 0;
+        if (!syncEnabled("arrows_in_body")) data.arrowsInBody = 0;
+        if (!syncEnabled("absorption")) data.absorptionAmount = 0.0;
+        if (!syncEnabled("speeds")) {
             data.walkSpeed = 0.2f;
             data.flySpeed = 0.1f;
         }
-        if (!platform.getConfigBoolean("sync.fall_distance", true)) data.fallDistance = 0.0f;
+        if (!syncEnabled("fall_distance")) data.fallDistance = 0.0f;
+    }
+
+    /**
+     * Before applying: what this server does not sync is not applied either, whatever the saving
+     * server stored. Location stays opt-in here as well.
+     */
+    private void filterForApply(PlayerData data) {
+        for (String key : SYNC_KEYS) {
+            if (!syncEnabled(key)) {
+                data.markNotSynced(key);
+            }
+        }
+        if (!platform.getConfigBoolean("sync.location", false)) data.worldName = null;
     }
 
     public boolean isSyncInProgress(UUID uuid) {

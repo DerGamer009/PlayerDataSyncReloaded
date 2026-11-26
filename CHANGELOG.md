@@ -2,6 +2,17 @@
 
 All notable changes to PlayerDataSyncReloaded will be documented in this file.
 
+## [26.12-Alpha.2] - 2026-11-26
+### Fixed
+- **Disabled sync toggles overwrote player values (#7)**: a `sync.*` key that is off stored a placeholder (`SURVIVAL`, 20 health, 0 experience, ...) and every server applied it, e.g. `sync.game_mode: false` set players to Survival on every join and ignored `force-gamemode`. Records now carry `notSynced`; handlers on Paper and Fabric skip those keys and the keys turned off on the loading server. Placeholders stay in the record for older servers.
+- `sync.statistics: false` also stopped advancements from being applied.
+- The Vault balance of a record saved with `sync.economy: false` (stored as 0) is no longer written.
+
+### Added
+- **Fabric (#6)**: location sync (`sync.location`) on all four lines, and `/pds status|info|save|load|saveall` (alias `/playerdatasync`, permission level 2).
+- `WorldNames`: Paper and Fabric translate `world`/`world_nether`/`world_the_end` and `minecraft:overworld`/`the_nether`/`the_end` into each other for location restore.
+- Tests for the toggle behavior and the world name mapping.
+
 ## [26.12-Alpha.1] - 2026-11-26
 ### Added
 - **Stale-save check for MongoDB**: `MongoStorage#saveChecked` stores `pds_saved_at` / `pds_saved_by` in each document and only writes over an unstamped document, its own, or the one it applied, like SQL since 26.11-Stable.

@@ -34,9 +34,11 @@ public class VersionHandlerImpl extends BukkitBaseVersionHandler {
     public void apply(PDSPlayer pdsPlayer, PlayerData data) {
         super.apply(pdsPlayer, data);
         Player player = (Player) pdsPlayer.getHandle();
-        player.setHealthScale(data.healthScale);
+        if (data.isSynced("health") && data.healthScale > 0) {
+            player.setHealthScale(data.healthScale);
+        }
 
-        if (data.attributes != null) {
+        if (data.isSynced("attributes") && data.attributes != null) {
             data.attributes.forEach((key, val) -> {
                 try {
                     org.bukkit.attribute.Attribute attr = org.bukkit.Registry.ATTRIBUTE.get(org.bukkit.NamespacedKey.fromString(key));

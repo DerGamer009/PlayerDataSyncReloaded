@@ -5,6 +5,7 @@ import de.craftingstudiopro.playerDataSyncReloaded.common.SyncManager;
 import de.craftingstudiopro.playerDataSyncReloaded.common.storage.SqlStorage;
 import de.craftingstudiopro.playerDataSyncReloaded.common.storage.Storage;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -53,6 +54,9 @@ public class PlayerDataSyncFabric implements ModInitializer {
         });
 
         ServerLifecycleEvents.SERVER_STARTING.register(this::setup);
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                PdsCommand.register(dispatcher, () -> syncManager,
+                        () -> platform == null ? "unknown" : platform.getConfigString("storage.type", "mariadb")));
         // Players still online when the server stops never fire DISCONNECT in time: save them here.
         ServerLifecycleEvents.SERVER_STOPPING.register(srv -> {
             if (syncManager == null) {

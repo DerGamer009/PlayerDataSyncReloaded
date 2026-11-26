@@ -2,7 +2,9 @@ package de.craftingstudiopro.playerDataSyncReloaded.api;
 
 import java.io.Serializable;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public class PlayerData implements Serializable {
@@ -14,6 +16,23 @@ public class PlayerData implements Serializable {
     public long savedAt;
     /** {@code server_name} of the server that saved this record. Null in records from versions before 26.12. */
     public String savedBy;
+    /**
+     * Sync keys (the part after {@code sync.}, e.g. {@code game_mode}) that the saving server had turned off.
+     * The stored values for these keys are placeholders and must not be applied. Null in records before 26.12-Alpha.2.
+     */
+    public Set<String> notSynced;
+
+    /** Whether the value behind this sync key may be applied. */
+    public boolean isSynced(String key) {
+        return notSynced == null || !notSynced.contains(key);
+    }
+
+    public void markNotSynced(String key) {
+        if (notSynced == null) {
+            notSynced = new HashSet<>();
+        }
+        notSynced.add(key);
+    }
     public int arrowsInBody;
 
     // Items
