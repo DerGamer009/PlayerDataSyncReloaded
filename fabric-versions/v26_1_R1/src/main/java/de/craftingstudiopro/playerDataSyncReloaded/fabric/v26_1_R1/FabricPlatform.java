@@ -70,4 +70,9 @@ public class FabricPlatform implements Platform {
     public List<String> getConfigStringList(String path) {
         return config.getStringList(path);
     }
+
+    @Override
+    public String getDefaultServerName() {
+        return "port " + server.getPort();
+    }
 }

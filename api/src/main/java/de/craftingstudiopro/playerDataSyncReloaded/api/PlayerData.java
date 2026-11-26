@@ -12,6 +12,8 @@ public class PlayerData implements Serializable {
     public String name;
     /** When this record was saved, epoch millis. 0 in records from versions before 26.9-Release. */
     public long savedAt;
+    /** {@code server_name} of the server that saved this record. Null in records from versions before 26.12. */
+    public String savedBy;
     public int arrowsInBody;
 
     // Items

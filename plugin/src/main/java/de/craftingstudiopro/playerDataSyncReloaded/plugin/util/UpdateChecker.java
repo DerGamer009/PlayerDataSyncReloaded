@@ -13,6 +13,9 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 public class UpdateChecker implements Listener {
 
@@ -33,16 +36,19 @@ public class UpdateChecker implements Listener {
     public void check() {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
-                URL url = new URL("https://api.modrinth.com/v2/project/" + projectId + "/version");
+                // Only Paper entries: since 26.10 every platform has its own Modrinth entry, and the
+                // newest one may be the Velocity or Fabric jar with a different version number.
+                String loaders = URLEncoder.encode("[\"paper\"]", StandardCharsets.UTF_8);
+                URL url = new URL("https://api.modrinth.com/v2/project/" + projectId + "/version?loaders=" + loaders);
                 HttpURLConnection connection = (HttpURLConnection) url.openConnection();
                 connection.setRequestMethod("GET");
                 connection.setRequestProperty("User-Agent", "PlayerDataSyncReloaded-UpdateChecker");
 
                 if (connection.getResponseCode() == 200) {
-                    JsonArray versions = JsonParser.parseReader(new InputStreamReader(connection.getInputStream())).getAsJsonArray();
-                    if (versions.size() > 0) {
-                        latestVersion = versions.get(0).getAsJsonObject().get("version_number").getAsString();
-                        
+                    JsonArray versions = JsonParser.parseReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8)).getAsJsonArray();
+                    latestVersion = newestFor(versions, isPreRelease(currentVersion));
+
+                    if (latestVersion != null) {
                         if (!currentVersion.equalsIgnoreCase(latestVersion)) {
                             updateAvailable = true;
                             plugin.getLogger().warning("§e[PlayerDataSync] A new version is available: §f" + latestVersion);
@@ -55,6 +61,26 @@ public class UpdateChecker implements Listener {
                 plugin.getLogger().warning("Could not check for updates on Modrinth: " + e.getMessage());
             }
         });
+    }
+
+    /**
+     * Newest entry Modrinth lists (newest first). A release server is only pointed to releases;
+     * a server running an alpha or beta is pointed to the newest build of any channel.
+     */
+    static String newestFor(JsonArray versions, boolean includePreReleases) {
+        for (int i = 0; i < versions.size(); i++) {
+            JsonObject version = versions.get(i).getAsJsonObject();
+            String type = version.has("version_type") ? version.get("version_type").getAsString() : "release";
+            if (includePreReleases || "release".equalsIgnoreCase(type)) {
+                return version.get("version_number").getAsString();
+            }
+        }
+        return null;
+    }
+
+    static boolean isPreRelease(String version) {
+        String v = version.toLowerCase(Locale.ROOT);
+        return v.contains("alpha") || v.contains("beta");
     }
 
     @EventHandler

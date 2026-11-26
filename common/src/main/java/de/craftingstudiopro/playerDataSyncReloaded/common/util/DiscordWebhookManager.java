@@ -34,6 +34,12 @@ public class DiscordWebhookManager {
         sendEmbed("Sync Failed", "Failed to sync data for **" + playerName + "**.", 0xFF0000, "Error: " + error);
     }
 
+    public void sendSaveRefused(String playerName, String serverName) {
+        sendEmbed("Save Refused", "Did not save **" + playerName + "** on **" + serverName
+                + "**: another server had stored a newer record. The newer record was kept and loaded.", 0xFFAA00,
+                "This server had read an older record, usually because a server switch did not wait for the previous server's save.");
+    }
+
     public void sendError(String error) {
         sendEmbed("System Error", "An internal error occurred.", 0xFFAA00, "Error: " + error);
     }

@@ -196,6 +196,8 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
                 + " \u00A78(attempt/success/fail)");
         sender.sendMessage("\u00A77Skipped: \u00A7fworld=" + stats.skippedByWorld + " \u00A78| \u00A7fcooldown=" + stats.skippedByCooldown
                 + " \u00A78| \u00A7fhash=" + stats.skippedByHash);
+        sender.sendMessage("\u00A77Newer record elsewhere: \u00A7frefused saves=" + (stats.refusedStale > 0 ? "\u00A7e" : "") + stats.refusedStale
+                + " \u00A78| \u00A7freloaded after join=" + (stats.outdatedReloads > 0 ? "\u00A7e" : "") + stats.outdatedReloads);
         sender.sendMessage("\u00A77Last durations: \u00A7fload=" + formatDuration(stats.lastLoadDurationMs)
                 + " \u00A78| \u00A7fsave=" + formatDuration(stats.lastSaveDurationMs));
         sender.sendMessage("\u00A77Excluded worlds: \u00A7f" + (stats.excludedWorlds.isEmpty() ? "-" : String.join(", ", stats.excludedWorlds)));
@@ -215,6 +217,8 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
                 + " \u00A78| \u00A77Reload queued: " + (state.reloadQueued ? "\u00A7eyes" : "\u00A7fno"));
         sender.sendMessage("\u00A77Applied record saved at: \u00A7f" + formatTime(state.appliedSavedAt)
                 + " \u00A78| \u00A77Last save here: \u00A7f" + formatTime(state.lastSavedAt));
+        sender.sendMessage("\u00A77Applied record saved by: \u00A7f" + (state.appliedSavedBy.isEmpty() ? "unknown" : state.appliedSavedBy)
+                + " \u00A78| \u00A77Refused saves since join: " + (state.refusedSaves > 0 ? "\u00A7e" : "\u00A7f") + state.refusedSaves);
     }
 
     private String formatTime(long epochMs) {
@@ -231,10 +235,10 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
     private void sendHelp(CommandSender sender) {
         sender.sendMessage("\u00A7bPlayerDataSyncReloaded \u00A77- Admin Interface");
         sender.sendMessage("\u00A77/pds status \u00A7f- Show runtime status and metrics");
+        sender.sendMessage("§7/pds info <player> §f- Show a player's sync state");
         sender.sendMessage("\u00A77/pds reload \u00A7f- Reload configuration");
         sender.sendMessage("\u00A77/pds save <player> \u00A7f- Manually save player data");
         sender.sendMessage("\u00A77/pds load <player> \u00A7f- Manually load player data");
-        sender.sendMessage("\u00A77/pds info <player> \u00A7f- Show a player's sync state");
         sender.sendMessage("\u00A77/pds saveall \u00A7f- Trigger save for all online players");
         sender.sendMessage("\u00A77/pds debug <on|off|toggle> \u00A7f- Change debug mode live");
         sender.sendMessage("\u00A77/pds backup list \u00A7f- List all backups");

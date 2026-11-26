@@ -2,6 +2,50 @@
 
 All notable changes to PlayerDataSyncReloaded will be documented in this file.
 
+## [26.12-Alpha.1] - 2026-11-26
+### Added
+- **Stale-save check for MongoDB**: `MongoStorage#saveChecked` stores `pds_saved_at` / `pds_saved_by` in each document and only writes over an unstamped document, its own, or the one it applied, like SQL since 26.11-Stable.
+- **Fabric gets the 26.11 fixes**: the stale-save check, the recheck after a join and retried loads now run on Fabric too (the 26.11-Stable release had no Fabric build).
+- **Fabric answers the save handshake**: after the proxy's `save:` the mod saves and replies `saved:<uuid>`, so switches away from Fabric backends no longer wait for `save_ack_timeout_ms`.
+- **`/pds status`**: new line `Newer record elsewhere: refused saves=<n> | reloaded after join=<n>`.
+- **`/pds info`**: new line `Applied record saved by: <server> | Refused saves since join: <n>`.
+- **`server_name`** (config): stored in every record as `savedBy`; empty means `port <server port>`.
+- **Discord**: event `save_refused` (`discord.events.save_refused`, default `true`) when a save is refused because another server stored a newer record.
+
+### Fixed
+- **Fabric could not read the proxy's messages**: `pds:sync` used a length-prefixed string codec, while Velocity and Paper send raw UTF-8. The payload is now read and written as raw bytes on every Fabric line.
+- **Update notice**: the update check took the newest Modrinth entry of any platform, so Paper servers reported `26.11-Velocity-Stable` as a new version. It now only looks at Paper entries, and release servers are only pointed to releases.
+- **MongoDB with a wrong encryption key**: a record that cannot be decrypted is now a failed load instead of "no record", so the server no longer overwrites it with its local data.
+
+### Build
+- Project reconstructed from the 26.10-ALPHA.001 jars (Paper, Velocity, Fabric) onto the 26.8 sources: the 26.9 and 26.10 changes are ported into the source tree.
+- New module `:fabric` builds the single Fabric jar (bootstrap + all `:fabric-versions:*` adapters, each in its own package `fabric.<line>`). The Paper jar no longer embeds Velocity and Fabric under `bundled/`; `pds.fabric.bundle` / `pds.forge.bundle` are gone.
+- JUnit tests for the server-switch logic in `common` (`SyncManagerSwitchTest`).
+
+## [26.11-Stable] - 2026-11-26
+### Fixed
+- **Saves no longer overwrite a newer record from another server.** Records are stamped (`pds_saved_at`, `pds_saved_by` columns); a server writes only if the stored record is still the one it loaded, otherwise it keeps the stored record, logs `Refused to save data for <name>: …` and loads the newer one.
+- **Recheck after join** (`sync.recheck_after_join_ms`, default `3000`): looks once more for a newer record from another server.
+- **SQL read errors** count as a failed load and are retried up to three times (1, 2, 4 s) instead of being treated as "no record".
+
+## [26.10-ALPHA.001] - 2026-09-10
+### Added
+- **Save handshake** (Velocity): before a switch the proxy sends `save:` and waits for `saved:<uuid>` at most `save_ack_timeout_ms` (`plugins/playerdatasync/playerdatasync.properties`, default `2000`).
+- **`/pds info <player>`**.
+- Paper and Fabric save every online player on shutdown and on `/pds reload`.
+- Redis subscription reconnects every 5 s after a connection loss.
+- One Fabric jar for 1.20.x, 1.21.x, 26.1 and 26.2 with its own libraries; separate Velocity jar.
+
+### Fixed
+- `/pds reload` in 26.9 refused all saves for players online during the reload.
+- Leaving on the death screen stored 0 health and killed the player on the next server.
+- A failed encryption stored the record unencrypted; it now fails the save.
+- The unchanged-inventory check compares the full serialized inventory instead of a hash code.
+
+## [26.9-Release] - 2026-09-10
+### Fixed
+- Loads are queued per player, saves are refused until the stored record has been applied, records carry `savedAt`, and a failed SQL save counts as failed.
+
 ## [26.8-ALPHA] - 2026-07-31
 ### Fixed
 - **Dead config toggles**: `sync.attributes`, `sync.pdc` and `sync.flight` were declared in `config.yml` but never evaluated in `SyncManager#filterData`, so switching them off had no effect. Same bug class as the `sync.economy` fix in 26.7.

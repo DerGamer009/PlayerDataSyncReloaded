@@ -26,9 +26,11 @@ public class PlayerDataSyncFabric implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        PayloadTypeRegistry.playC2S().register(PdsSyncC2SPayload.PACKET_ID, PdsSyncC2SPayload.CODEC);
-        ServerPlayNetworking.registerGlobalReceiver(PdsSyncC2SPayload.PACKET_ID, (payload, context) -> {
+        PayloadTypeRegistry.playC2S().register(PdsSyncPayload.PACKET_ID, PdsSyncPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(PdsSyncPayload.PACKET_ID, PdsSyncPayload.CODEC);
+        ServerPlayNetworking.registerGlobalReceiver(PdsSyncPayload.PACKET_ID, (payload, context) -> {
             String msg = payload.message();
+            var player = context.player();
             MinecraftServer server = context.player().getServer();
             if (server == null) {
                 return;
@@ -38,9 +40,14 @@ public class PlayerDataSyncFabric implements ModInitializer {
                     return;
                 }
                 if (msg.startsWith("save:")) {
-                    syncManager.handleQuit(new FabricPDSPlayer(context.player()));
+                    // Save handshake: answer once the save finished, failed or was skipped.
+                    syncManager.handleQuit(new FabricPDSPlayer(player)).whenComplete((unused, ex) -> server.execute(() -> {
+                        if (platform.isOnline(player.getUuid())) {
+                            ServerPlayNetworking.send(player, new PdsSyncPayload("saved:" + player.getUuid()));
+                        }
+                    }));
                 } else if (msg.startsWith("load:")) {
-                    syncManager.handleJoin(new FabricPDSPlayer(context.player()));
+                    syncManager.handleJoin(new FabricPDSPlayer(player));
                 }
             });
         });

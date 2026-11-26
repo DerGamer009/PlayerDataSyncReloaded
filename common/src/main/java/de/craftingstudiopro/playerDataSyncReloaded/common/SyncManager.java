@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.logging.Logger;
@@ -35,6 +36,22 @@ public class SyncManager {
     /** Serialized inventory last saved or applied; an identical inventory skips the save. */
     private final ConcurrentHashMap<UUID, String> lastSavedInventory = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, Long> lastSaveMillis = new ConcurrentHashMap<>();
+    /** Server name stored in the applied record ({@code /pds info}). */
+    private final ConcurrentHashMap<UUID, String> appliedSavedBy = new ConcurrentHashMap<>();
+    /**
+     * savedAt of the stored record this server's state is based on: 0 = none was applied,
+     * {@link #BASIS_UNCHECKED} = unknown (after {@code /pds reload}), saves then skip the check.
+     */
+    private final ConcurrentHashMap<UUID, Long> basisSavedAt = new ConcurrentHashMap<>();
+    /** savedAt of this server's newest save per player, so the recheck does not mistake it for a foreign record. */
+    private final ConcurrentHashMap<UUID, Long> ownSavedAt = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Integer> loadRetries = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Long> lastStaleReload = new ConcurrentHashMap<>();
+    /** Saves refused for this player since the join ({@code /pds info}). */
+    private final ConcurrentHashMap<UUID, Integer> refusedSaves = new ConcurrentHashMap<>();
+    private final Set<UUID> recheckScheduled = ConcurrentHashMap.newKeySet();
+    private static final long BASIS_UNCHECKED = -1L;
+    private static final int MAX_LOAD_RETRIES = 3;
     private final Set<String> excludedWorlds = ConcurrentHashMap.newKeySet();
 
     private final LongAdder loadAttempts = new LongAdder();
@@ -46,6 +63,10 @@ public class SyncManager {
     private final LongAdder skippedByWorld = new LongAdder();
     private final LongAdder skippedByCooldown = new LongAdder();
     private final LongAdder skippedByHash = new LongAdder();
+    /** Saves refused because another server had stored a newer record. */
+    private final LongAdder refusedStale = new LongAdder();
+    /** Joins where the recheck found a newer record and loaded it. */
+    private final LongAdder outdatedReloads = new LongAdder();
     private final AtomicLong lastLoadDurationMs = new AtomicLong(-1L);
     private final AtomicLong lastSaveDurationMs = new AtomicLong(-1L);
     private final AtomicLong lastErrorAt = new AtomicLong(-1L);
@@ -179,6 +200,8 @@ public class SyncManager {
         if (isWorldExcluded(player.getWorldName())) {
             skippedByWorld.increment();
             loaded.add(uuid);
+            // No record applied: a later save must not overwrite one another server stored.
+            basisSavedAt.putIfAbsent(uuid, 0L);
             logger.info("Skipped loading for " + player.getName() + " in excluded world " + player.getWorldName());
             return;
         }
@@ -202,13 +225,32 @@ public class SyncManager {
                 platform.runTask(() -> applyData(player, data, startTime, force));
             } else {
                 loaded.add(uuid);
+                basisSavedAt.put(uuid, 0L);
+                appliedSavedBy.remove(uuid);
+                loadRetries.remove(uuid);
                 loadSuccess.increment();
                 finishLoad(player);
+                scheduleRecheck(uuid);
             }
         }).exceptionally(ex -> {
             finishLoad(player);
             loadFailed.increment();
             trackError("load data for " + player.getName(), ex);
+
+            int attempt = loadRetries.merge(uuid, 1, Integer::sum);
+            if (attempt <= MAX_LOAD_RETRIES) {
+                long delay = 1000L << (attempt - 1);
+                logger.warning("Retrying load for " + player.getName() + " in " + delay + " ms (attempt " + attempt + "/" + MAX_LOAD_RETRIES + ").");
+                CompletableFuture.delayedExecutor(delay, TimeUnit.MILLISECONDS).execute(() -> platform.runTask(() -> {
+                    PDSPlayer current = platform.getPlayer(uuid);
+                    if (current != null && platform.isOnline(uuid)) {
+                        handleJoin(current, force);
+                    }
+                }));
+                return null;
+            }
+            loadRetries.remove(uuid);
+
             String syncFailed = platform.getConfigString("messages.sync_failed", "&cFailed to sync your data. Please contact an admin.");
             if (!syncFailed.isEmpty()) {
                 platform.sendMessage(player.getUniqueId(), syncFailed);
@@ -250,6 +292,13 @@ public class SyncManager {
             try {
                 versionHandler.apply(player, data);
                 appliedSavedAt.put(uuid, data.savedAt);
+                basisSavedAt.put(uuid, data.savedAt);
+                if (data.savedBy != null && !data.savedBy.isBlank()) {
+                    appliedSavedBy.put(uuid, data.savedBy);
+                } else {
+                    appliedSavedBy.remove(uuid);
+                }
+                loadRetries.remove(uuid);
                 loaded.add(uuid);
 
                 if (platform.getConfigBoolean("sync.economy", true)) {
@@ -273,12 +322,66 @@ public class SyncManager {
                 if (discordManager != null && platform.getConfigBoolean("discord.events.sync_success", true)) {
                     discordManager.sendSyncSuccess(player.getName(), duration);
                 }
+                scheduleRecheck(uuid);
             } catch (Exception ex) {
                 loadFailed.increment();
                 trackError("apply data for " + player.getName(), ex);
             }
         }
         finishLoad(player);
+    }
+
+    /**
+     * Without the save handshake the new server can read the record before the old server's save
+     * has landed. Look once more shortly after the join and load a newer record from another server.
+     */
+    private void scheduleRecheck(UUID uuid) {
+        long delay = getConfigLong("sync.recheck_after_join_ms", 3000L);
+        if (delay <= 0L || !recheckScheduled.add(uuid)) {
+            return;
+        }
+        CompletableFuture.delayedExecutor(delay, TimeUnit.MILLISECONDS).execute(() -> {
+            if (!platform.isOnline(uuid) || !loaded.contains(uuid) || isSyncInProgress(uuid)) {
+                return;
+            }
+            storage.load(uuid).thenAccept(optionalData -> {
+                if (optionalData.isEmpty()) {
+                    return;
+                }
+                long storedAt = optionalData.get().savedAt;
+                Long basis = basisSavedAt.get(uuid);
+                Long own = ownSavedAt.get(uuid);
+                boolean newer = storedAt != 0L && basis != null && basis != BASIS_UNCHECKED
+                        && storedAt != basis && (own == null || storedAt != own);
+                if (!newer) {
+                    return;
+                }
+                platform.runTask(() -> {
+                    PDSPlayer player = platform.getPlayer(uuid);
+                    if (player != null) {
+                        outdatedReloads.increment();
+                        logger.warning("Loaded an outdated record for " + player.getName() + "; another server saved a newer one. Loading it now.");
+                        handleJoin(player, false);
+                    }
+                });
+            }).exceptionally(ex -> null);
+        });
+    }
+
+    private void reloadAfterStaleSave(PDSPlayer player) {
+        UUID uuid = player.getUniqueId();
+        long now = System.currentTimeMillis();
+        Long last = lastStaleReload.get(uuid);
+        if (last != null && now - last < 10_000L) {
+            return; // e.g. a record this server cannot decrypt: do not reload on every autosave
+        }
+        lastStaleReload.put(uuid, now);
+        platform.runTask(() -> {
+            PDSPlayer current = platform.getPlayer(uuid);
+            if (current != null && platform.isOnline(uuid)) {
+                handleJoin(current, true);
+            }
+        });
     }
 
     public CompletableFuture<Void> handleQuit(PDSPlayer player) {
@@ -291,13 +394,26 @@ public class SyncManager {
         UUID uuid = player.getUniqueId();
         loaded.remove(uuid);
         appliedSavedAt.remove(uuid);
+        appliedSavedBy.remove(uuid);
         reloadRequested.remove(uuid);
+        basisSavedAt.remove(uuid);
+        loadRetries.remove(uuid);
+        recheckScheduled.remove(uuid);
+        lastStaleReload.remove(uuid);
+        refusedSaves.remove(uuid);
+        save.whenComplete((unused, ex) -> {
+            if (!platform.isOnline(uuid)) {
+                ownSavedAt.remove(uuid);
+            }
+        });
         return save;
     }
 
     /** Treats the player's current state as applied, e.g. for players online during {@code /pds reload}. */
     public void markLoaded(PDSPlayer player) {
         loaded.add(player.getUniqueId());
+        // The record this state came from is unknown: the next save is written without the check.
+        basisSavedAt.put(player.getUniqueId(), BASIS_UNCHECKED);
     }
 
     /** Saves every given player; used on shutdown and reload. Failures do not fail the returned future. */
@@ -342,6 +458,7 @@ public class SyncManager {
         saveAttempts.increment();
         PlayerData data = versionHandler.capture(player);
         data.savedAt = System.currentTimeMillis();
+        data.savedBy = serverName();
         if (platform.getConfigBoolean("sync.economy", true)) {
             data.balance = readBalance(player);
         }
@@ -358,19 +475,34 @@ public class SyncManager {
             lastSavedInventory.remove(player.getUniqueId());
         }
 
+        UUID uuid = player.getUniqueId();
+        long basis = basisSavedAt.getOrDefault(uuid, BASIS_UNCHECKED);
+        ownSavedAt.put(uuid, data.savedAt);
         long startTime = System.currentTimeMillis();
-        return storage.save(data).thenRun(() -> {
+        CompletableFuture<Boolean> write = basis == BASIS_UNCHECKED
+                ? storage.save(data).thenApply(v -> true)
+                : storage.saveChecked(data, basis, nodeId);
+        return write.thenAccept(written -> {
+            if (!written) {
+                onStaleSave(player);
+                return;
+            }
+            if (platform.isOnline(uuid)) {
+                // From now on our own record is the one this server's state is based on.
+                basisSavedAt.computeIfPresent(uuid, (k, v) -> data.savedAt);
+            }
+
             long duration = System.currentTimeMillis() - startTime;
             lastSaveDurationMs.set(duration);
             saveSuccess.increment();
-            lastSaveMillis.put(player.getUniqueId(), System.currentTimeMillis());
+            lastSaveMillis.put(uuid, System.currentTimeMillis());
             if (data.inventoryContents != null) {
-                lastSavedInventory.put(player.getUniqueId(), data.inventoryContents);
+                lastSavedInventory.put(uuid, data.inventoryContents);
             }
             if (!isAutosave) {
                 logger.info("Saved data for player: " + player.getName());
                 if (redisManager != null) {
-                    redisManager.publish("saved:" + player.getUniqueId() + ":" + nodeId);
+                    redisManager.publish("saved:" + uuid + ":" + nodeId);
                 }
             }
         }).whenComplete((unused, ex) -> {
@@ -381,13 +513,41 @@ public class SyncManager {
         });
     }
 
+    /** Another server stored a newer record after this server loaded the player. Nothing was written. */
+    private void onStaleSave(PDSPlayer player) {
+        UUID uuid = player.getUniqueId();
+        boolean online = platform.isOnline(uuid);
+        refusedStale.increment();
+        refusedSaves.merge(uuid, 1, Integer::sum);
+        logger.warning("Refused to save data for " + player.getName()
+                + ": another server saved a newer record after this server loaded the player. Keeping the stored record"
+                + (online ? " and loading it now." : "."));
+        if (discordManager != null && platform.getConfigBoolean("discord.events.save_refused", true)) {
+            discordManager.sendSaveRefused(player.getName(), serverName());
+        }
+        if (online) {
+            reloadAfterStaleSave(player);
+        }
+    }
+
+    /** {@code server_name} from the config, or what the platform can tell about itself. */
+    private String serverName() {
+        String configured = platform.getConfigString("server_name", "");
+        if (configured != null && !configured.isBlank()) {
+            return configured.trim();
+        }
+        return platform.getDefaultServerName();
+    }
+
     public PlayerSyncState getPlayerState(UUID uuid) {
         return new PlayerSyncState(
                 loaded.contains(uuid),
                 isSyncInProgress(uuid),
                 reloadRequested.containsKey(uuid),
                 appliedSavedAt.getOrDefault(uuid, 0L),
-                lastSaveMillis.getOrDefault(uuid, 0L)
+                lastSaveMillis.getOrDefault(uuid, 0L),
+                appliedSavedBy.getOrDefault(uuid, ""),
+                refusedSaves.getOrDefault(uuid, 0)
         );
     }
 
@@ -450,6 +610,8 @@ public class SyncManager {
                 skippedByWorld.sum(),
                 skippedByCooldown.sum(),
                 skippedByHash.sum(),
+                refusedStale.sum(),
+                outdatedReloads.sum(),
                 lastLoadDurationMs.get(),
                 lastSaveDurationMs.get(),
                 lastErrorAt.get(),
@@ -493,13 +655,19 @@ public class SyncManager {
         public final boolean reloadQueued;
         public final long appliedSavedAt;
         public final long lastSavedAt;
+        /** {@code server_name} of the server that saved the applied record, "" if unknown. */
+        public final String appliedSavedBy;
+        public final int refusedSaves;
 
-        public PlayerSyncState(boolean loaded, boolean syncInProgress, boolean reloadQueued, long appliedSavedAt, long lastSavedAt) {
+        public PlayerSyncState(boolean loaded, boolean syncInProgress, boolean reloadQueued, long appliedSavedAt,
+                               long lastSavedAt, String appliedSavedBy, int refusedSaves) {
             this.loaded = loaded;
             this.syncInProgress = syncInProgress;
             this.reloadQueued = reloadQueued;
             this.appliedSavedAt = appliedSavedAt;
             this.lastSavedAt = lastSavedAt;
+            this.appliedSavedBy = appliedSavedBy;
+            this.refusedSaves = refusedSaves;
         }
     }
 
@@ -514,6 +682,8 @@ public class SyncManager {
         public final long skippedByWorld;
         public final long skippedByCooldown;
         public final long skippedByHash;
+        public final long refusedStale;
+        public final long outdatedReloads;
         public final long lastLoadDurationMs;
         public final long lastSaveDurationMs;
         public final long lastErrorAtEpochMs;
@@ -531,6 +701,8 @@ public class SyncManager {
                 long skippedByWorld,
                 long skippedByCooldown,
                 long skippedByHash,
+                long refusedStale,
+                long outdatedReloads,
                 long lastLoadDurationMs,
                 long lastSaveDurationMs,
                 long lastErrorAtEpochMs,
@@ -547,6 +719,8 @@ public class SyncManager {
             this.skippedByWorld = skippedByWorld;
             this.skippedByCooldown = skippedByCooldown;
             this.skippedByHash = skippedByHash;
+            this.refusedStale = refusedStale;
+            this.outdatedReloads = outdatedReloads;
             this.lastLoadDurationMs = lastLoadDurationMs;
             this.lastSaveDurationMs = lastSaveDurationMs;
             this.lastErrorAtEpochMs = lastErrorAtEpochMs;

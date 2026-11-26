@@ -8,12 +8,15 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
+import net.minecraft.network.PacketByteBuf;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -79,13 +82,23 @@ public class PlayerDataSyncFabric implements ModInitializer {
 
         Identifier syncId = new Identifier("pds", "sync");
         ServerPlayNetworking.registerGlobalReceiver(syncId, (srv, player, handler, buf, responseSender) -> {
-            String msg = buf.readString();
+            // Raw UTF-8 without a length prefix, as Velocity and Paper send it.
+            byte[] raw = new byte[buf.readableBytes()];
+            buf.readBytes(raw);
+            String msg = new String(raw, StandardCharsets.UTF_8);
             srv.execute(() -> {
                 if (syncManager == null) {
                     return;
                 }
                 if (msg.startsWith("save:")) {
-                    syncManager.handleQuit(new FabricPDSPlayer(player));
+                    // Save handshake: answer once the save finished, failed or was skipped.
+                    syncManager.handleQuit(new FabricPDSPlayer(player)).whenComplete((unused, ex) -> srv.execute(() -> {
+                        if (platform.isOnline(player.getUuid())) {
+                            PacketByteBuf ack = PacketByteBufs.create();
+                            ack.writeBytes(("saved:" + player.getUuid()).getBytes(StandardCharsets.UTF_8));
+                            ServerPlayNetworking.send(player, syncId, ack);
+                        }
+                    }));
                 } else if (msg.startsWith("load:")) {
                     syncManager.handleJoin(new FabricPDSPlayer(player));
                 }
