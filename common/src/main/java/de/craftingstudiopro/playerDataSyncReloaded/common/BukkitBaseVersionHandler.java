@@ -102,52 +102,69 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
         Player player = (Player) pdsPlayer.getHandle();
         // Stats
         // A player who left on the death screen is stored with 0 health; applying it kills them again.
-        if (data.health > 0) {
+        // Every block checks data.isSynced(...): a value the saving server or this server does not
+        // sync is a placeholder and must not replace the player's own value (issue #7).
+        if (data.isSynced("health") && data.health > 0) {
             player.setHealth(Math.min(data.health, getMaxHealth(player)));
         }
-        player.setFoodLevel(data.foodLevel);
-        player.setSaturation(data.saturation);
-        player.setExhaustion(data.exhaustion);
-        player.setRemainingAir(data.airLevel);
-        player.setFireTicks(data.fireTicks);
-        player.setFreezeTicks(data.freezeTicks);
-        player.setArrowsInBody(data.arrowsInBody);
-        player.setAbsorptionAmount(data.absorptionAmount);
+        if (data.isSynced("food")) {
+            player.setFoodLevel(data.foodLevel);
+            player.setSaturation(data.saturation);
+            player.setExhaustion(data.exhaustion);
+        }
+        if (data.isSynced("air_level")) player.setRemainingAir(data.airLevel);
+        if (data.isSynced("fire_ticks")) player.setFireTicks(data.fireTicks);
+        if (data.isSynced("freeze_ticks")) player.setFreezeTicks(data.freezeTicks);
+        if (data.isSynced("arrows_in_body")) player.setArrowsInBody(data.arrowsInBody);
+        if (data.isSynced("absorption")) player.setAbsorptionAmount(data.absorptionAmount);
 
         // Exp
-        player.setLevel(data.level);
-        player.setExp(data.exp);
-        player.setTotalExperience(data.totalExperience);
+        if (data.isSynced("experience")) {
+            player.setLevel(data.level);
+            player.setExp(data.exp);
+            player.setTotalExperience(data.totalExperience);
+        }
 
         // Status
-        player.setGameMode(GameMode.valueOf(data.gameMode));
-        
+        if (data.isSynced("game_mode") && data.gameMode != null) {
+            player.setGameMode(GameMode.valueOf(data.gameMode));
+        }
+
         try {
-            player.setAllowFlight(data.canFly);
-            player.setFlying(data.isFlying);
-            player.setWalkSpeed(data.walkSpeed);
-            player.setFlySpeed(data.flySpeed);
-            player.setFallDistance(data.fallDistance);
+            if (data.isSynced("flight")) {
+                player.setAllowFlight(data.canFly);
+                player.setFlying(data.isFlying);
+            }
+            if (data.isSynced("speeds")) {
+                player.setWalkSpeed(data.walkSpeed);
+                player.setFlySpeed(data.flySpeed);
+            }
+            if (data.isSynced("fall_distance")) player.setFallDistance(data.fallDistance);
         } catch (NoSuchMethodError ignored) {}
 
         // Effects
-        player.getActivePotionEffects().forEach(e -> player.removePotionEffect(e.getType()));
-        try {
-            Collection<PotionEffect> effects = (Collection<PotionEffect>) SerializationUtil.fromBase64(data.potionEffects);
-            player.addPotionEffects(effects);
-        } catch (Exception ignored) {}
+        if (data.isSynced("potion_effects")) {
+            player.getActivePotionEffects().forEach(e -> player.removePotionEffect(e.getType()));
+            try {
+                Collection<PotionEffect> effects = (Collection<PotionEffect>) SerializationUtil.fromBase64(data.potionEffects);
+                player.addPotionEffects(effects);
+            } catch (Exception ignored) {}
+        }
 
         // Inventory
-        deserializeInventory(pdsPlayer, data.inventoryContents);
-        try {
-            ItemStack[] ec = (ItemStack[]) SerializationUtil.fromBase64(data.enderChestContents);
-            player.getEnderChest().setContents(filterItems(ec));
-        } catch (Exception ignored) {}
-        
-        player.getInventory().setHeldItemSlot(data.selectedSlot);
+        if (data.isSynced("inventory") && data.inventoryContents != null) {
+            deserializeInventory(pdsPlayer, data.inventoryContents);
+            player.getInventory().setHeldItemSlot(data.selectedSlot);
+        }
+        if (data.isSynced("ender_chest")) {
+            try {
+                ItemStack[] ec = (ItemStack[]) SerializationUtil.fromBase64(data.enderChestContents);
+                player.getEnderChest().setContents(filterItems(ec));
+            } catch (Exception ignored) {}
+        }
 
         // PDC
-        if (data.persistentDataContainer != null) {
+        if (data.isSynced("pdc") && data.persistentDataContainer != null) {
             try {
                 Map<org.bukkit.NamespacedKey, Object> values = (Map<org.bukkit.NamespacedKey, Object>) SerializationUtil.fromBase64(data.persistentDataContainer);
                 values.forEach((key, val) -> player.getPersistentDataContainer().set(key, (org.bukkit.persistence.PersistentDataType) getDataType(val), val));
@@ -155,32 +172,56 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
         }
 
         // Attributes
-        applyAttributes(player, data.attributes);
+        if (data.isSynced("attributes")) {
+            applyAttributes(player, data.attributes);
+        }
 
         // Stats & Advancements
-        try {
-            applyStatistics(player, (Map<String, Integer>) SerializationUtil.fromBase64(data.statistics));
-            applyAdvancements(player, (java.util.List<String>) SerializationUtil.fromBase64(data.advancements));
-        } catch (Exception ignored) {}
+        if (data.isSynced("statistics")) {
+            try {
+                applyStatistics(player, (Map<String, Integer>) SerializationUtil.fromBase64(data.statistics));
+            } catch (Exception ignored) {}
+        }
+        if (data.isSynced("advancements")) {
+            try {
+                applyAdvancements(player, (java.util.List<String>) SerializationUtil.fromBase64(data.advancements));
+            } catch (Exception ignored) {}
+        }
 
         // Time & Weather
-        if (data.playerTime != -1) {
-            player.setPlayerTime(data.playerTime, false);
-        } else {
-            player.resetPlayerTime();
+        if (data.isSynced("player_time")) {
+            if (data.playerTime != -1) {
+                player.setPlayerTime(data.playerTime, false);
+            } else {
+                player.resetPlayerTime();
+            }
         }
-        if (data.playerWeather != null) {
-            try {
-                player.setPlayerWeather(org.bukkit.WeatherType.valueOf(data.playerWeather));
-            } catch (Exception ignored) {}
-        } else {
-            player.resetPlayerWeather();
+        if (data.isSynced("player_weather")) {
+            if (data.playerWeather != null) {
+                try {
+                    player.setPlayerWeather(org.bukkit.WeatherType.valueOf(data.playerWeather));
+                } catch (Exception ignored) {}
+            } else {
+                player.resetPlayerWeather();
+            }
         }
 
         // Location: filterData() nulls worldName unless sync.location is on, so this is the opt-in gate.
         // The target world only exists if the destination server actually has it loaded.
         if (data.worldName != null) {
             org.bukkit.World world = Bukkit.getWorld(data.worldName);
+            if (world == null) {
+                // A record saved on Fabric names the dimension (minecraft:the_nether); use this server's world of that kind.
+                String environment = WorldNames.environmentFor(data.worldName);
+                if (environment != null) {
+                    for (org.bukkit.World candidate : Bukkit.getWorlds()) {
+                        if (candidate.getEnvironment().name().equals(environment)) {
+                            world = candidate;
+                            break;
+                        }
+                    }
+                }
+            }
             if (world == null) {
                 Bukkit.getLogger().warning("[PlayerDataSync] Skipping location restore for " + player.getName()
                         + ": world '" + data.worldName + "' does not exist on this server.");

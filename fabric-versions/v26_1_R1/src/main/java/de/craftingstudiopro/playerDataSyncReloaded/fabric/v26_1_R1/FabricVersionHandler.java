@@ -10,6 +10,7 @@ import com.google.gson.JsonParser;
 import de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer;
 import de.craftingstudiopro.playerDataSyncReloaded.api.PlayerData;
 import de.craftingstudiopro.playerDataSyncReloaded.api.VersionHandler;
+import de.craftingstudiopro.playerDataSyncReloaded.common.WorldNames;
 import net.minecraft.core.NonNullList;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -54,6 +55,14 @@ public class FabricVersionHandler implements VersionHandler {
 
         data.gameMode = player.gameMode.getGameModeForPlayer().name();
 
+        // Location; SyncManager#filterData drops it unless sync.location is on.
+        data.worldName = player.level().dimension().identifier().toString();
+        data.x = player.getX();
+        data.y = player.getY();
+        data.z = player.getZ();
+        data.yaw = player.getYRot();
+        data.pitch = player.getXRot();
+
         return data;
     }
 
@@ -62,24 +71,45 @@ public class FabricVersionHandler implements VersionHandler {
         ServerPlayer player = (ServerPlayer) pdsPlayer.getHandle();
 
         // A player who left on the death screen is stored with 0 health; applying it kills them again.
-        if (data.health > 0) {
+        // Values the saving server or this server does not sync are placeholders (issue #7).
+        if (data.isSynced("health") && data.health > 0) {
             player.setHealth((float) data.health);
         }
-        player.getFoodData().setFoodLevel(data.foodLevel);
-        player.experienceProgress = data.exp;
-        player.experienceLevel = data.level;
-        player.totalExperience = data.totalExperience;
+        if (data.isSynced("food")) {
+            player.getFoodData().setFoodLevel(data.foodLevel);
+        }
+        if (data.isSynced("experience")) {
+            player.experienceProgress = data.exp;
+            player.experienceLevel = data.level;
+            player.totalExperience = data.totalExperience;
+        }
 
-        if (data.inventoryContents != null) {
+        if (data.isSynced("inventory") && data.inventoryContents != null) {
             deserializeInventory(pdsPlayer, data.inventoryContents);
         }
-        if (data.enderChestContents != null) {
+        if (data.isSynced("ender_chest") && data.enderChestContents != null) {
             applyContainer(player, player.getEnderChestInventory(), data.enderChestContents);
         }
-        if (data.potionEffects != null) {
+        if (data.isSynced("potion_effects") && data.potionEffects != null) {
             applyEffects(player, data.potionEffects);
         }
-        applyAttributes(player, data.attributes);
+        if (data.isSynced("attributes")) {
+            applyAttributes(player, data.attributes);
+        }
+
+        // Location: only present with sync.location: true (filtered on save and before apply).
+        if (data.worldName != null) {
+            String dimension = WorldNames.toDimensionId(data.worldName);
+            Identifier key = dimension == null ? null : Identifier.tryParse(dimension);
+            net.minecraft.server.level.ServerLevel level = key == null ? null : player.level().getServer()
+                    .getLevel(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, key));
+            if (level == null) {
+                LoggerFactory.getLogger("PlayerDataSync").warn("Skipping location restore for {}: world '{}' does not exist on this server.",
+                        player.getName().getString(), data.worldName);
+            } else {
+                player.teleportTo(level, data.x, data.y, data.z, java.util.Set.of(), data.yaw, data.pitch, true);
+            }
+        }
     }
 
     @Override
