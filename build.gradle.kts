@@ -94,7 +94,7 @@ subprojects {
 
     // Note: modules under :versions: are configured in versions/build.gradle.kts (nested subprojects).
     val javaReleaseVersion = when {
-        moduleName == "api" || moduleName == "common" -> 17
+        moduleName == "api" || moduleName == "common" || moduleName == "fabric" -> 17
         moduleName == "plugin" || moduleName == "velocity" -> 21
         path == ":forge-versions:v1_20_R1" -> 17
         path.startsWith(":forge-versions:") -> 21

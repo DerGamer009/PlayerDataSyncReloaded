@@ -35,6 +35,19 @@ tasks.named<JavaCompile>("compileJava") {
     dependsOn("generatePluginBuildInfo")
 }
 
+tasks.named<Jar>("jar") {
+    archiveBaseName.set("PlayerDataSyncReloaded-Velocity")
+}
+
+val copyJar by tasks.registering(Copy::class) {
+    from(tasks.named("jar"))
+    into(rootProject.layout.buildDirectory.dir("libs"))
+}
+
+tasks.named("build") {
+    dependsOn(copyJar)
+}
+
 repositories {
     mavenCentral()
     maven("https://repo.papermc.io/repository/maven-public/")

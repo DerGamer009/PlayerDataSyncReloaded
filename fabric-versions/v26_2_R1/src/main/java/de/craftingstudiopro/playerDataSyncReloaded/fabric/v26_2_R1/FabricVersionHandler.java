@@ -1,4 +1,4 @@
-package de.craftingstudiopro.playerDataSyncReloaded.fabric;
+package de.craftingstudiopro.playerDataSyncReloaded.fabric.v26_2_R1;
 
 import com.mojang.serialization.DataResult;
 import com.mojang.serialization.JsonOps;
@@ -61,7 +61,10 @@ public class FabricVersionHandler implements VersionHandler {
     public void apply(PDSPlayer pdsPlayer, PlayerData data) {
         ServerPlayer player = (ServerPlayer) pdsPlayer.getHandle();
 
-        player.setHealth((float) data.health);
+        // A player who left on the death screen is stored with 0 health; applying it kills them again.
+        if (data.health > 0) {
+            player.setHealth((float) data.health);
+        }
         player.getFoodData().setFoodLevel(data.foodLevel);
         player.experienceProgress = data.exp;
         player.experienceLevel = data.level;

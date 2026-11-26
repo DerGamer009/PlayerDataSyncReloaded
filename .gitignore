@@ -22,6 +22,8 @@ out/
 # Build config, not local state — these must stay tracked.
 !/gradle.properties
 !/gradle/*.properties
+# Default Fabric config that FileConfig loads from the jar.
+!/common/src/main/resources/playerdatasync.properties
 /tmp/
 
 # OS spezifische Dateien

@@ -3,9 +3,11 @@ import java.util.zip.ZipFile
 
 // Nested :fabric-versions:* are not root `subprojects { }` children; set --release explicitly.
 subprojects {
+    // 1.20.1 servers run on Java 17; the single Fabric jar must load there.
+    val release = if (name == "v1_20_R1") 17 else 21
     tasks.withType<JavaCompile>().configureEach {
         options.encoding = "UTF-8"
-        options.release.set(21)
+        options.release.set(release)
     }
 
     afterEvaluate {

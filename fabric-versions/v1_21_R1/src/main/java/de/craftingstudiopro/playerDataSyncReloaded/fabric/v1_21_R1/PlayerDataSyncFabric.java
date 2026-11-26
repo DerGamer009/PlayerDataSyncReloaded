@@ -1,16 +1,21 @@
-package de.craftingstudiopro.playerDataSyncReloaded.fabric;
+package de.craftingstudiopro.playerDataSyncReloaded.fabric.v1_21_R1;
 
+import de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer;
 import de.craftingstudiopro.playerDataSyncReloaded.common.SyncManager;
 import de.craftingstudiopro.playerDataSyncReloaded.common.storage.SqlStorage;
 import de.craftingstudiopro.playerDataSyncReloaded.common.storage.Storage;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.util.Identifier;
+import net.minecraft.server.network.ServerPlayerEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class PlayerDataSyncFabric implements ModInitializer {
     private static final Logger LOG = LoggerFactory.getLogger("PlayerDataSync");
@@ -21,7 +26,49 @@ public class PlayerDataSyncFabric implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        PayloadTypeRegistry.playC2S().register(PdsSyncPayload.PACKET_ID, PdsSyncPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(PdsSyncPayload.PACKET_ID, PdsSyncPayload.CODEC);
+        ServerPlayNetworking.registerGlobalReceiver(PdsSyncPayload.PACKET_ID, (payload, context) -> {
+            String msg = payload.message();
+            var player = context.player();
+            MinecraftServer server = context.player().getServer();
+            if (server == null) {
+                return;
+            }
+            server.execute(() -> {
+                if (syncManager == null) {
+                    return;
+                }
+                if (msg.startsWith("save:")) {
+                    // Save handshake: answer once the save finished, failed or was skipped.
+                    syncManager.handleQuit(new FabricPDSPlayer(player)).whenComplete((unused, ex) -> server.execute(() -> {
+                        if (platform.isOnline(player.getUuid())) {
+                            ServerPlayNetworking.send(player, new PdsSyncPayload("saved:" + player.getUuid()));
+                        }
+                    }));
+                } else if (msg.startsWith("load:")) {
+                    syncManager.handleJoin(new FabricPDSPlayer(player));
+                }
+            });
+        });
+
         ServerLifecycleEvents.SERVER_STARTING.register(this::setup);
+        // Players still online when the server stops never fire DISCONNECT in time: save them here.
+        ServerLifecycleEvents.SERVER_STOPPING.register(srv -> {
+            if (syncManager == null) {
+                return;
+            }
+            List<PDSPlayer> players = new ArrayList<>();
+            for (ServerPlayerEntity player : srv.getPlayerManager().getPlayerList()) {
+                players.add(new FabricPDSPlayer(player));
+            }
+            syncManager.saveAll(players);
+        });
+        ServerLifecycleEvents.SERVER_STOPPED.register(srv -> {
+            if (storage != null) {
+                storage.close();
+            }
+        });
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             if (syncManager != null) {
@@ -31,7 +78,7 @@ public class PlayerDataSyncFabric implements ModInitializer {
 
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             if (syncManager != null) {
-                syncManager.handleQuit(new FabricPDSPlayer(handler.player));
+                syncManager.handleDisconnect(new FabricPDSPlayer(handler.player));
             }
         });
     }
@@ -55,21 +102,6 @@ public class PlayerDataSyncFabric implements ModInitializer {
 
         this.syncManager = new SyncManager(platform, storage, new FabricVersionHandler());
         platform.getLogger().info("PlayerDataSync Fabric initialized!");
-
-        Identifier syncId = new Identifier("pds", "sync");
-        ServerPlayNetworking.registerGlobalReceiver(syncId, (srv, player, handler, buf, responseSender) -> {
-            String msg = buf.readString();
-            srv.execute(() -> {
-                if (syncManager == null) {
-                    return;
-                }
-                if (msg.startsWith("save:")) {
-                    syncManager.handleQuit(new FabricPDSPlayer(player));
-                } else if (msg.startsWith("load:")) {
-                    syncManager.handleJoin(new FabricPDSPlayer(player));
-                }
-            });
-        });
     }
 
     private int parsePort(String raw) {

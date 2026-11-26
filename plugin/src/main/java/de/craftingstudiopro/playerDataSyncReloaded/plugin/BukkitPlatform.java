@@ -65,4 +65,9 @@ public class BukkitPlatform implements Platform {
     public List<String> getConfigStringList(String path) {
         return plugin.getConfig().getStringList(path);
     }
+
+    @Override
+    public String getDefaultServerName() {
+        return "port " + Bukkit.getPort();
+    }
 }

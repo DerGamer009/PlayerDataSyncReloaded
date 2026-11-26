@@ -21,4 +21,9 @@ public interface Platform {
     String getConfigString(String path, String def);
     boolean getConfigBoolean(String path, boolean def);
     java.util.List<String> getConfigStringList(String path);
+
+    /** Name stored in saved records when {@code server_name} is not set. */
+    default String getDefaultServerName() {
+        return "unnamed";
+    }
 }

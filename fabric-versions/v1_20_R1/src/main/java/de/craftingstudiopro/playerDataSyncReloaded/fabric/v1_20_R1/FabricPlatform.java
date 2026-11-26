@@ -1,4 +1,4 @@
-package de.craftingstudiopro.playerDataSyncReloaded.fabric;
+package de.craftingstudiopro.playerDataSyncReloaded.fabric.v1_20_R1;
 
 import de.craftingstudiopro.playerDataSyncReloaded.common.FileConfig;
 import de.craftingstudiopro.playerDataSyncReloaded.common.Platform;
@@ -69,5 +69,10 @@ public class FabricPlatform implements Platform {
     @Override
     public List<String> getConfigStringList(String path) {
         return config.getStringList(path);
+    }
+
+    @Override
+    public String getDefaultServerName() {
+        return "port " + server.getServerPort();
     }
 }

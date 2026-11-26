@@ -65,7 +65,7 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
                     sender.sendMessage("\u00A7cPlayer not found.");
                     return true;
                 }
-                plugin.getSyncManager().handleJoin(new BukkitPDSPlayer(loadTarget));
+                plugin.getSyncManager().handleJoin(new BukkitPDSPlayer(loadTarget), true);
                 sender.sendMessage("\u00A7aManually loading data for " + loadTarget.getName());
                 return true;
             case "saveall":
@@ -78,6 +78,18 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
                 return true;
             case "status":
                 sendStatus(sender);
+                return true;
+            case "info":
+                if (args.length < 2) {
+                    sender.sendMessage("\u00A7cUsage: /pds info <player>");
+                    return true;
+                }
+                org.bukkit.entity.Player infoTarget = Bukkit.getPlayer(args[1]);
+                if (infoTarget == null) {
+                    sender.sendMessage("\u00A7cPlayer not found.");
+                    return true;
+                }
+                sendInfo(sender, infoTarget);
                 return true;
             case "debug":
                 return handleDebug(sender, args);
@@ -184,6 +196,8 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
                 + " \u00A78(attempt/success/fail)");
         sender.sendMessage("\u00A77Skipped: \u00A7fworld=" + stats.skippedByWorld + " \u00A78| \u00A7fcooldown=" + stats.skippedByCooldown
                 + " \u00A78| \u00A7fhash=" + stats.skippedByHash);
+        sender.sendMessage("\u00A77Newer record elsewhere: \u00A7frefused saves=" + (stats.refusedStale > 0 ? "\u00A7e" : "") + stats.refusedStale
+                + " \u00A78| \u00A7freloaded after join=" + (stats.outdatedReloads > 0 ? "\u00A7e" : "") + stats.outdatedReloads);
         sender.sendMessage("\u00A77Last durations: \u00A7fload=" + formatDuration(stats.lastLoadDurationMs)
                 + " \u00A78| \u00A7fsave=" + formatDuration(stats.lastSaveDurationMs));
         sender.sendMessage("\u00A77Excluded worlds: \u00A7f" + (stats.excludedWorlds.isEmpty() ? "-" : String.join(", ", stats.excludedWorlds)));
@@ -195,6 +209,24 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    private void sendInfo(CommandSender sender, org.bukkit.entity.Player target) {
+        SyncManager.PlayerSyncState state = plugin.getSyncManager().getPlayerState(target.getUniqueId());
+        sender.sendMessage("\u00A7bSync state for \u00A7f" + target.getName());
+        sender.sendMessage("\u00A77Data applied: " + (state.loaded ? "\u00A7ayes" : "\u00A7cno (saves are refused)")
+                + " \u00A78| \u00A77Load in progress: " + (state.syncInProgress ? "\u00A7eyes" : "\u00A7fno")
+                + " \u00A78| \u00A77Reload queued: " + (state.reloadQueued ? "\u00A7eyes" : "\u00A7fno"));
+        sender.sendMessage("\u00A77Applied record saved at: \u00A7f" + formatTime(state.appliedSavedAt)
+                + " \u00A78| \u00A77Last save here: \u00A7f" + formatTime(state.lastSavedAt));
+        sender.sendMessage("\u00A77Applied record saved by: \u00A7f" + (state.appliedSavedBy.isEmpty() ? "unknown" : state.appliedSavedBy)
+                + " \u00A78| \u00A77Refused saves since join: " + (state.refusedSaves > 0 ? "\u00A7e" : "\u00A7f") + state.refusedSaves);
+    }
+
+    private String formatTime(long epochMs) {
+        if (epochMs <= 0L) return "never";
+        return DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+                .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()));
+    }
+
     private String formatDuration(long durationMs) {
         if (durationMs < 0) return "n/a";
         return durationMs + "ms";
@@ -203,6 +235,7 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
     private void sendHelp(CommandSender sender) {
         sender.sendMessage("\u00A7bPlayerDataSyncReloaded \u00A77- Admin Interface");
         sender.sendMessage("\u00A77/pds status \u00A7f- Show runtime status and metrics");
+        sender.sendMessage("§7/pds info <player> §f- Show a player's sync state");
         sender.sendMessage("\u00A77/pds reload \u00A7f- Reload configuration");
         sender.sendMessage("\u00A77/pds save <player> \u00A7f- Manually save player data");
         sender.sendMessage("\u00A77/pds load <player> \u00A7f- Manually load player data");
@@ -217,7 +250,7 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            return Arrays.asList("status", "reload", "save", "load", "saveall", "debug", "migrate", "backup").stream()
+            return Arrays.asList("status", "info", "reload", "save", "load", "saveall", "debug", "migrate", "backup").stream()
                     .filter(s -> s.startsWith(args[0].toLowerCase()))
                     .collect(Collectors.toList());
         }
@@ -231,7 +264,7 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
                     .filter(s -> s.startsWith(args[1].toLowerCase()))
                     .collect(Collectors.toList());
         }
-        if (args.length == 2 && (args[0].equalsIgnoreCase("save") || args[0].equalsIgnoreCase("load"))) {
+        if (args.length == 2 && (args[0].equalsIgnoreCase("save") || args[0].equalsIgnoreCase("load") || args[0].equalsIgnoreCase("info"))) {
             return Bukkit.getOnlinePlayers().stream()
                     .map(org.bukkit.entity.Player::getName)
                     .filter(name -> name.toLowerCase().startsWith(args[1].toLowerCase()))

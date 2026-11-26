@@ -1,18 +1,8 @@
-import org.gradle.api.tasks.bundling.AbstractArchiveTask
-import org.gradle.api.tasks.bundling.Jar
-
 plugins {
     id("xyz.jpenilla.run-paper") version "2.3.1"
     // 8.1.x uses ASM that cannot read Java 25 bytecode (major 69); GradleUp Shadow bundles current ASM.
     id("com.gradleup.shadow") version "8.3.10"
 }
-
-val fabricBundle =
-    (rootProject.findProperty("pds.fabric.bundle") as String?)?.takeIf { it.isNotBlank() } ?: "v1_20_R1"
-val forgeBundle =
-    (rootProject.findProperty("pds.forge.bundle") as String?)?.takeIf { it.isNotBlank() } ?: "v1_20_R1"
-val enableForge =
-    (rootProject.findProperty("pds.enableForge") as String?)?.toBoolean() ?: false
 
 dependencies {
     implementation(project(":api"))
@@ -35,7 +25,7 @@ dependencies {
 
 tasks {
     shadowJar {
-        // Paper plugin + embedded sibling JARs under bundled/ (Velocity / Fabric / Forge), not merged.
+        // Paper plugin only. Velocity and Fabric have their own jars (:velocity:jar, :fabric:shadowJar).
         archiveBaseName.set("PlayerDataSyncReloaded")
         archiveClassifier.set("")
         archiveVersion.set(project.version.toString())
@@ -43,32 +33,6 @@ tasks {
         mergeServiceFiles()
         // Paper 1.21.x PluginRemapper uses ASM that cannot read MR-JAR stacks (e.g. class file 69 under META-INF/versions/).
         exclude("META-INF/versions/**")
-
-        val forgeDeps = if (enableForge)
-            listOf(project(":forge-versions:$forgeBundle").tasks.named("reobfJar")) else emptyList()
-
-        dependsOn(
-            listOf(
-                project(":velocity").tasks.named("jar"),
-                project(":fabric-versions:$fabricBundle").tasks.named("remapJar"),
-                project(":fabric-versions:$fabricBundle").tasks.named("checkFabricModMetadata"),
-            ) + forgeDeps
-        )
-
-        from(project(":velocity").tasks.named<Jar>("jar").flatMap { it.archiveFile }) {
-            into("bundled")
-            rename { _: String -> "playerdatasync-velocity.jar" }
-        }
-        from(project(":fabric-versions:$fabricBundle").tasks.named<AbstractArchiveTask>("remapJar").flatMap { it.archiveFile }) {
-            into("bundled")
-            rename { _: String -> "playerdatasync-fabric.jar" }
-        }
-        if (enableForge) {
-            from(project(":forge-versions:$forgeBundle").tasks.named<Jar>("jar").flatMap { it.archiveFile }) {
-                into("bundled")
-                rename { _: String -> "playerdatasync-forge.jar" }
-            }
-        }
     }
 
     val copyJar by registering(Copy::class) {

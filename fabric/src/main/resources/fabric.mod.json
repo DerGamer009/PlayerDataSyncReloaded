@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "playerdatasync",
+  "version": "${version}",
+  "name": "PlayerDataSync",
+  "description": "Cross-platform player data synchronization. One jar for Minecraft 1.20.1 - 26.2.",
+  "authors": [
+    "CraftingStudioPro"
+  ],
+  "contact": {
+    "homepage": "https://craftingstudiopro.dev",
+    "sources": "https://github.com/DerGamer009/PlayerDataSyncReloaded"
+  },
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "de.craftingstudiopro.playerDataSyncReloaded.fabric.PlayerDataSyncFabricBootstrap"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.15.0",
+    "fabric-api": "*",
+    "minecraft": ">=1.20.1",
+    "java": ">=17"
+  }
+}

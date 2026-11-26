@@ -5,7 +5,11 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.ErrorCategory;
+import com.mongodb.MongoWriteException;
+import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.ReplaceOptions;
+import com.mongodb.client.result.UpdateResult;
 import de.craftingstudiopro.playerDataSyncReloaded.api.PlayerData;
 import de.craftingstudiopro.playerDataSyncReloaded.common.LegacyMigrator;
 import de.craftingstudiopro.playerDataSyncReloaded.common.util.CryptoUtil;
@@ -74,22 +78,63 @@ public class MongoStorage implements Storage {
     @Override
     public CompletableFuture<Void> save(PlayerData data) {
         return CompletableFuture.runAsync(() -> {
-            String jsonData = gson.toJson(data);
-            if (encryptionKey != null && encryptionKey.length() >= 16) {
-                try {
-                    jsonData = CryptoUtil.encrypt(jsonData, encryptionKey);
-                    Document doc = new Document("_id", data.uuid.toString());
-                    doc.put("encrypted_data", jsonData);
-                    collection.replaceOne(eq("_id", data.uuid.toString()), doc, new ReplaceOptions().upsert(true));
-                    return;
-                } catch (Exception e) {
-                    logger.severe("CRITICAL: Failed to encrypt personal data for " + data.uuid);
-                }
+            Document doc = toDocument(data, null);
+            collection.replaceOne(eq("_id", data.uuid.toString()), doc, new ReplaceOptions().upsert(true));
+        }, dbExecutor);
+    }
+
+    /** The stored document: plain JSON fields, or {@code encrypted_data}; plus the stamp for saveChecked(). */
+    private Document toDocument(PlayerData data, String nodeId) {
+        String jsonData = gson.toJson(data);
+        Document doc;
+        if (encryptionKey != null && encryptionKey.length() >= 16) {
+            try {
+                jsonData = CryptoUtil.encrypt(jsonData, encryptionKey);
+            } catch (Exception e) {
+                throw new IllegalStateException("Failed to encrypt player data for " + data.uuid + "; refusing to store it unencrypted", e);
+            }
+            doc = new Document("_id", data.uuid.toString());
+            doc.put("encrypted_data", jsonData);
+        } else {
+            doc = Document.parse(jsonData);
+            doc.put("_id", data.uuid.toString());
+        }
+        doc.put("pds_saved_at", data.savedAt);
+        doc.put("pds_saved_by", nodeId);
+        return doc;
+    }
+
+    /** Same rules as {@link SqlStorage#saveChecked}: write only over an unstamped document, our own, or the one we applied. */
+    @Override
+    public CompletableFuture<Boolean> saveChecked(PlayerData data, long basis, String nodeId) {
+        return CompletableFuture.supplyAsync(() -> {
+            String id = data.uuid.toString();
+            Document doc = toDocument(data, nodeId);
+            UpdateResult result = collection.replaceOne(Filters.and(
+                    eq("_id", id),
+                    Filters.or(Filters.exists("pds_saved_at", false), eq("pds_saved_by", nodeId), eq("pds_saved_at", basis))
+            ), doc);
+            if (result.getMatchedCount() > 0) {
+                return true;
             }
 
-            Document doc = Document.parse(jsonData);
-            doc.put("_id", data.uuid.toString());
-            collection.replaceOne(eq("_id", data.uuid.toString()), doc, new ReplaceOptions().upsert(true));
+            Document stored = collection.find(eq("_id", id)).first();
+            if (stored != null) {
+                Object storedAt = stored.get("pds_saved_at");
+                long at = storedAt instanceof Number ? ((Number) storedAt).longValue() : -1L;
+                return nodeId.equals(stored.getString("pds_saved_by")) || at == basis || at == data.savedAt;
+            }
+
+            try {
+                collection.insertOne(doc);
+                return true;
+            } catch (MongoWriteException e) {
+                // Another server inserted the document between our replace and insert.
+                if (e.getError().getCategory() == ErrorCategory.DUPLICATE_KEY) {
+                    return false;
+                }
+                throw e;
+            }
         }, dbExecutor);
     }
 
@@ -104,11 +149,15 @@ public class MongoStorage implements Storage {
                     try {
                         jsonData = CryptoUtil.decrypt(encrypted, encryptionKey);
                     } catch (Exception e) {
+                        // Reporting "no record" would make the server keep its local data and later
+                        // overwrite the encrypted record with it.
                         logger.severe("CRITICAL: Failed to decrypt personal data for " + uuid);
-                        return Optional.empty();
+                        throw new IllegalStateException("Could not decrypt player data for " + uuid, e);
                     }
                 } else {
                     doc.remove("_id");
+                    doc.remove("pds_saved_at");
+                    doc.remove("pds_saved_by");
                     jsonData = doc.toJson();
                 }
                 return Optional.of(gson.fromJson(jsonData, PlayerData.class));

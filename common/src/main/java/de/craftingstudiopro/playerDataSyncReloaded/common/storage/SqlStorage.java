@@ -101,6 +101,9 @@ public class SqlStorage implements Storage {
             checkAndAddColumn(conn, "name", "VARCHAR(16) NOT NULL DEFAULT 'Unknown'");
             checkAndAddColumn(conn, "data", "TEXT");
             checkAndAddColumn(conn, "last_updated", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+            // Stamp of the stored record (savedAt and the writing node) for saveChecked().
+            checkAndAddColumn(conn, "pds_saved_at", "BIGINT NULL");
+            checkAndAddColumn(conn, "pds_saved_by", "VARCHAR(36) NULL");
 
             // Special migration: Handle 'data_json' column found in some older Reloaded versions
             if (columnExists(conn, "data_json")) {
@@ -173,29 +176,99 @@ public class SqlStorage implements Storage {
     public CompletableFuture<Void> save(PlayerData data) {
         return CompletableFuture.runAsync(() -> {
             String sql = dbType.equals("postgres") ?
-                "INSERT INTO player_data (uuid, name, data, last_updated) VALUES (?, ?, ?, CURRENT_TIMESTAMP) " +
-                "ON CONFLICT (uuid) DO UPDATE SET name = EXCLUDED.name, data = EXCLUDED.data, last_updated = EXCLUDED.last_updated" :
-                "INSERT INTO player_data (uuid, name, data, last_updated) VALUES (?, ?, ?, CURRENT_TIMESTAMP) " +
-                "ON DUPLICATE KEY UPDATE name = VALUES(name), data = VALUES(data), last_updated = VALUES(last_updated)";
+                "INSERT INTO player_data (uuid, name, data, last_updated, pds_saved_at, pds_saved_by) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, NULL) " +
+                "ON CONFLICT (uuid) DO UPDATE SET name = EXCLUDED.name, data = EXCLUDED.data, last_updated = EXCLUDED.last_updated, " +
+                "pds_saved_at = EXCLUDED.pds_saved_at, pds_saved_by = EXCLUDED.pds_saved_by" :
+                "INSERT INTO player_data (uuid, name, data, last_updated, pds_saved_at, pds_saved_by) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, NULL) " +
+                "ON DUPLICATE KEY UPDATE name = VALUES(name), data = VALUES(data), last_updated = VALUES(last_updated), " +
+                "pds_saved_at = VALUES(pds_saved_at), pds_saved_by = VALUES(pds_saved_by)";
 
             try (Connection conn = dataSource.getConnection();
                  PreparedStatement ps = conn.prepareStatement(sql)) {
-                String jsonData = gson.toJson(data);
-                
-                if (encryptionKey != null && encryptionKey.length() >= 16) {
-                    try {
-                        jsonData = CryptoUtil.encrypt(jsonData, encryptionKey);
-                    } catch (Exception e) {
-                        logger.severe("CRITICAL: Failed to encrypt personal data for " + data.uuid);
-                    }
-                }
-
                 ps.setString(1, data.uuid.toString());
                 ps.setString(2, data.name);
-                ps.setString(3, jsonData);
+                ps.setString(3, serialize(data));
+                ps.setLong(4, data.savedAt);
                 ps.executeUpdate();
             } catch (SQLException e) {
                 logger.log(Level.SEVERE, "Could not save player data for " + data.uuid, e);
+                throw new IllegalStateException("Could not save player data for " + data.uuid, e);
+            }
+        }, dbExecutor);
+    }
+
+    private String serialize(PlayerData data) {
+        String jsonData = gson.toJson(data);
+        if (encryptionKey != null && encryptionKey.length() >= 16) {
+            try {
+                jsonData = CryptoUtil.encrypt(jsonData, encryptionKey);
+            } catch (Exception e) {
+                throw new IllegalStateException("Failed to encrypt player data for " + data.uuid + "; refusing to store it unencrypted", e);
+            }
+        }
+        return jsonData;
+    }
+
+    /**
+     * Writes only if the stored row is unstamped, was written by this node, or is still the record
+     * this node applied ({@code pds_saved_at == basis}). Otherwise another server stored a newer
+     * record after this server loaded the player, and writing would overwrite it with stale data.
+     */
+    @Override
+    public CompletableFuture<Boolean> saveChecked(PlayerData data, long basis, String nodeId) {
+        return CompletableFuture.supplyAsync(() -> {
+            String update = "UPDATE player_data SET name = ?, data = ?, last_updated = CURRENT_TIMESTAMP, pds_saved_at = ?, pds_saved_by = ? " +
+                    "WHERE uuid = ? AND (pds_saved_at IS NULL OR pds_saved_by = ? OR pds_saved_at = ?)";
+            String insert = "INSERT INTO player_data (uuid, name, data, last_updated, pds_saved_at, pds_saved_by) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)";
+            String select = "SELECT pds_saved_at, pds_saved_by FROM player_data WHERE uuid = ?";
+
+            try (Connection conn = dataSource.getConnection()) {
+                String json = serialize(data);
+                String uuid = data.uuid.toString();
+
+                try (PreparedStatement ps = conn.prepareStatement(update)) {
+                    ps.setString(1, data.name);
+                    ps.setString(2, json);
+                    ps.setLong(3, data.savedAt);
+                    ps.setString(4, nodeId);
+                    ps.setString(5, uuid);
+                    ps.setString(6, nodeId);
+                    ps.setLong(7, basis);
+                    if (ps.executeUpdate() > 0) {
+                        return true;
+                    }
+                }
+
+                try (PreparedStatement ps = conn.prepareStatement(select)) {
+                    ps.setString(1, uuid);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            long storedAt = rs.getLong(1);
+                            String storedBy = rs.getString(2);
+                            // MySQL reports 0 changed rows when nothing differs; that is not a conflict.
+                            return nodeId.equals(storedBy) || storedAt == basis || storedAt == data.savedAt;
+                        }
+                    }
+                }
+
+                try (PreparedStatement ps = conn.prepareStatement(insert)) {
+                    ps.setString(1, uuid);
+                    ps.setString(2, data.name);
+                    ps.setString(3, json);
+                    ps.setLong(4, data.savedAt);
+                    ps.setString(5, nodeId);
+                    ps.executeUpdate();
+                    return true;
+                } catch (SQLException e) {
+                    // Another server inserted the row between our UPDATE and INSERT.
+                    if (e.getSQLState() != null && e.getSQLState().startsWith("23")) {
+                        return false;
+                    }
+                    throw e;
+                }
+            } catch (SQLException e) {
+                logger.log(Level.SEVERE, "Could not save player data for " + data.uuid, e);
+                throw new IllegalStateException("Could not save player data for " + data.uuid, e);
             }
         }, dbExecutor);
     }
@@ -247,7 +320,10 @@ public class SqlStorage implements Storage {
                     }
                 }
             } catch (SQLException e) {
+                // Reporting "no record" here would make the server keep its local, possibly outdated
+                // inventory and later write it over the stored record.
                 logger.log(Level.SEVERE, "Could not load player data for " + uuid, e);
+                throw new IllegalStateException("Could not load player data for " + uuid, e);
             }
             return Optional.empty();
         }, dbExecutor);
@@ -265,6 +341,7 @@ public class SqlStorage implements Storage {
             }
         } catch (SQLException e) {
             logger.log(Level.SEVERE, "Could not load legacy player data during fallback for " + uuid, e);
+            throw new IllegalStateException("Could not load player data for " + uuid, e);
         }
         return Optional.empty();
     }

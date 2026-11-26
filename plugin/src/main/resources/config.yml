@@ -1,5 +1,8 @@
 # Global Settings
 debug: false
+# Name of this server, stored with every save and shown by /pds info and in Discord messages.
+# Empty = "port <server port>".
+server_name: ""
 
 # Auto-Save Settings (Safe guard against crashes)
 autosave:
@@ -71,6 +74,7 @@ sync:
   force_save_on_quit: false
   min_save_interval_ms: 0 # 0 = disabled, helpful to reduce autosave spam
   enforce_cooldown_on_quit: false # true = cooldown also applies to normal quit saves
+  recheck_after_join_ms: 3000 # look for a newer record once more after a join (covers switches the proxy did not wait for), 0 = off
   air_level: true
   fire_ticks: true
   player_time: true
@@ -98,6 +102,7 @@ discord:
   events:
     sync_success: true
     sync_failed: true
+    save_refused: true # a save was refused because another server had stored a newer record
     errors: true
     backups: true
 

@@ -16,6 +16,8 @@ public class RedisManager {
     private JedisPool jedisPool;
     private final Logger logger;
     private final String channel = "pdasync_sync_notify";
+    private volatile boolean closed;
+    private volatile JedisPubSub pubSub;
 
     public RedisManager(Logger logger, String host, int port, String password, boolean ssl) {
         this.logger = logger;
@@ -38,19 +40,44 @@ public class RedisManager {
         logger.info("Redis connection established.");
     }
 
+    /**
+     * Subscribes on a dedicated thread. If the connection drops, the thread waits 5 seconds and
+     * subscribes again until {@link #close()} is called.
+     */
     public void subscribe(Consumer<String> messageConsumer) {
-        CompletableFuture.runAsync(() -> {
-            try (Jedis jedis = jedisPool.getResource()) {
-                jedis.subscribe(new JedisPubSub() {
-                    @Override
-                    public void onMessage(String channel, String message) {
-                        messageConsumer.accept(message);
+        Thread thread = new Thread(() -> {
+            while (!closed) {
+                try (Jedis jedis = jedisPool.getResource()) {
+                    pubSub = new JedisPubSub() {
+                        @Override
+                        public void onMessage(String channel, String message) {
+                            try {
+                                messageConsumer.accept(message);
+                            } catch (Exception e) {
+                                logger.warning("Redis message handler failed: " + e.getMessage());
+                            }
+                        }
+                    };
+                    jedis.subscribe(pubSub, channel);
+                } catch (Exception e) {
+                    if (closed) {
+                        break;
                     }
-                }, channel);
-            } catch (Exception e) {
-                logger.severe("Redis subscription failed: " + e.getMessage());
+                    logger.warning("Redis subscription lost (" + e.getMessage() + "), reconnecting in 5s.");
+                }
+
+                if (!closed) {
+                    try {
+                        Thread.sleep(5000L);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
             }
-        });
+        }, "PDS-Redis-Subscriber");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     public void publish(String message) {
@@ -64,6 +91,15 @@ public class RedisManager {
     }
 
     public void close() {
+        closed = true;
+        JedisPubSub active = pubSub;
+        if (active != null) {
+            try {
+                active.unsubscribe();
+            } catch (Exception ignored) {
+                // connection already gone
+            }
+        }
         if (jedisPool != null) jedisPool.close();
     }
 }
