@@ -37,18 +37,28 @@ public class PlayerDataSyncFabric implements ModInitializer {
                 return;
             }
             server.execute(() -> {
-                if (syncManager == null) {
-                    return;
-                }
                 if (msg.startsWith("save:")) {
-                    // Save handshake: answer once the save finished, failed or was skipped.
-                    syncManager.handleQuit(new FabricPDSPlayer(player)).whenComplete((unused, ex) -> server.execute(() -> {
+                    // Save handshake: answer once the save finished, failed or was skipped. The answer
+                    // repeats what followed "save:" (uuid and, from 26.12-Alpha.3 proxies, a request id).
+                    String answer = "saved:" + msg.substring("save:".length());
+                    java.util.concurrent.CompletableFuture<Void> save;
+                    try {
+                        // Without storage there is nothing to save, but the proxy still waits for the answer.
+                        save = syncManager == null ? java.util.concurrent.CompletableFuture.completedFuture(null)
+                                : syncManager.handleQuit(new FabricPDSPlayer(player));
+                    } catch (RuntimeException e) {
+                        save = java.util.concurrent.CompletableFuture.failedFuture(e);
+                    }
+                    save.whenComplete((unused, ex) -> server.execute(() -> {
                         if (platform.isOnline(player.getUUID())) {
-                            ServerPlayNetworking.send(player, new PdsSyncPayload("saved:" + player.getUUID()));
+                            ServerPlayNetworking.send(player, new PdsSyncPayload(answer));
                         }
                     }));
-                } else if (msg.startsWith("load:")) {
-                    syncManager.handleJoin(new FabricPDSPlayer(player));
+                } else if (msg.startsWith("load:") && syncManager != null) {
+                    // JOIN already loads; a client can send this too, so only act before that.
+                    if (!syncManager.isLoaded(player.getUUID()) && !syncManager.isSyncInProgress(player.getUUID())) {
+                        syncManager.handleJoin(new FabricPDSPlayer(player));
+                    }
                 }
             });
         });
@@ -66,7 +76,8 @@ public class PlayerDataSyncFabric implements ModInitializer {
             for (ServerPlayer player : srv.getPlayerList().getPlayers()) {
                 players.add(new FabricPDSPlayer(player));
             }
-            syncManager.saveAll(players);
+            // Also stops the DISCONNECT saves that follow from racing with these.
+            syncManager.shutdown(players);
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(srv -> {
             if (storage != null) {
@@ -75,6 +86,9 @@ public class PlayerDataSyncFabric implements ModInitializer {
         });
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+            if (platform != null) {
+                platform.markOnline(handler.player.getUUID());
+            }
             if (syncManager != null) {
                 syncManager.handleJoin(new FabricPDSPlayer(handler.player));
             }
@@ -84,6 +98,9 @@ public class PlayerDataSyncFabric implements ModInitializer {
             if (syncManager != null) {
                 syncManager.handleDisconnect(new FabricPDSPlayer(handler.player));
             }
+            if (platform != null) {
+                platform.markOffline(handler.player.getUUID());
+            }
         });
     }
 
@@ -92,20 +109,29 @@ public class PlayerDataSyncFabric implements ModInitializer {
 
         this.storage = new SqlStorage(
                 platform.getLogger(),
-                platform.getConfigString("storage.type", "sqlite"),
+                platform.getConfigString("storage.type", "mariadb"),
                 platform.getConfigString("storage.host", ""),
                 parsePort(platform.getConfigString("storage.port", "0")),
                 platform.getConfigString("storage.database", "playerdata.db"),
                 platform.getConfigString("storage.username", ""),
                 platform.getConfigString("storage.password", ""));
+        if (this.storage instanceof SqlStorage sql) {
+            // Records Paper stored encrypted are only readable with the same key.
+            sql.setEncryptionKey(platform.getConfigString("security.encryption_key", ""));
+        }
         try {
             this.storage.init();
         } catch (Exception e) {
-            LOG.error("Failed to initialize storage", e);
+            // Without storage nothing is synced and nothing is overwritten: players keep this
+            // server's local data until the problem is fixed and the server restarts.
+            LOG.error("PlayerDataSync is disabled: could not connect to the database ({}). Check storage.* in config/playerdatasync.properties.", e.getMessage(), e);
+            this.storage = null;
         }
 
-        this.syncManager = new SyncManager(platform, storage, new FabricVersionHandler());
-        platform.getLogger().info("PlayerDataSync Fabric initialized!");
+        if (this.storage != null) {
+            this.syncManager = new SyncManager(platform, storage, new FabricVersionHandler());
+            platform.getLogger().info("PlayerDataSync Fabric initialized!");
+        }
     }
 
     private int parsePort(String raw) {

@@ -75,6 +75,7 @@ sync:
   min_save_interval_ms: 0 # 0 = disabled, helpful to reduce autosave spam
   enforce_cooldown_on_quit: false # true = cooldown also applies to normal quit saves
   recheck_after_join_ms: 3000 # look for a newer record once more after a join (covers switches the proxy did not wait for), 0 = off
+  lock_while_loading: true # until the stored data is applied: no dropping, picking up, inventory clicks, interaction or damage
   air_level: true
   fire_ticks: true
   player_time: true

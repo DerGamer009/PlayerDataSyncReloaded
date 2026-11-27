@@ -34,8 +34,14 @@ public class BukkitPlayerDataSyncAPI implements PlayerDataSyncAPI {
             }
 
             try {
-                plugin.getSyncManager().handleQuit(new BukkitPDSPlayer(player));
-                future.complete(null);
+                // Complete when the save has been written, not when it was started.
+                plugin.getSyncManager().handleQuit(new BukkitPDSPlayer(player)).whenComplete((unused, ex) -> {
+                    if (ex != null) {
+                        future.completeExceptionally(ex);
+                    } else {
+                        future.complete(null);
+                    }
+                });
             } catch (Exception ex) {
                 future.completeExceptionally(ex);
             }

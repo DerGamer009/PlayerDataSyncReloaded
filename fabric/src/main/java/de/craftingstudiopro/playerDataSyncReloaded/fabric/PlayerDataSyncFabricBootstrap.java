@@ -19,7 +19,7 @@ public final class PlayerDataSyncFabricBootstrap implements ModInitializer {
         String module = adapterFor(minecraft);
         if (module == null) {
             throw new IllegalStateException("PlayerDataSync has no Fabric adapter for Minecraft " + minecraft
-                    + " (supported: 1.20.x, 1.21.x, 26.1, 26.2)");
+                    + " (supported: 1.20.1, 1.21.4, 26.1.x, 26.2.x)");
         }
 
         String className = "de.craftingstudiopro.playerDataSyncReloaded.fabric." + module + ".PlayerDataSyncFabric";
@@ -31,10 +31,6 @@ public final class PlayerDataSyncFabricBootstrap implements ModInitializer {
     }
 
     static String adapterFor(String minecraft) {
-        if (minecraft.startsWith("26.2")) return "v26_2_R1";
-        if (minecraft.startsWith("26.1")) return "v26_1_R1";
-        if (minecraft.startsWith("1.21")) return "v1_21_R1";
-        if (minecraft.startsWith("1.20")) return "v1_20_R1";
-        return null;
+        return de.craftingstudiopro.playerDataSyncReloaded.common.util.Versions.fabricAdapterFor(minecraft);
     }
 }

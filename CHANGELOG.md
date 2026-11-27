@@ -2,6 +2,57 @@
 
 All notable changes to PlayerDataSyncReloaded will be documented in this file.
 
+## [26.12-Alpha.3] - 2026-11-27
+### Fixed (data loss and duplication)
+- **An unchanged inventory skipped the whole save.** XP, health, food, ender chest, effects, advancements, balance and location changed without the inventory were not saved, also on quit and in the save handshake, so the next server rolled them back. A save is now only skipped when the whole record is unchanged.
+- **Quick rejoin on the same server** read the record before this server's quit save had landed, applied the older record and later saved it over the newer one. The load now waits for that save.
+- **Reconnect during a load** applied the record to the old player object and marked the new session as loaded without its data. Loads are now tied to the session and applied to the current player object (on Fabric a respawn replaces it).
+- **A failed apply** (for example an unreadable inventory) left the local inventory in place, counted as loaded and saved it over the record. It is now a failed load with the usual retries, and the player stays unloaded.
+- **Inventories from another platform** (Paper record on Fabric and the other way round, or Fabric 1.20/1.21 NBT on another version) were silently ignored and then overwritten. Reading now fails with a clear message.
+- **Fabric records set Paper players to walk speed 0, no air, no flight and balance 0**: keys Fabric does not capture are now marked as not synced. The same for servers without a Vault economy: their 0 balance is no longer applied elsewhere.
+- **Paper: actions before the load lands** (dropping items, picking up, inventory clicks, interaction, damage, hunger) are cancelled until the stored data is applied (`sync.lock_while_loading`, default `true`). If the load fails for good the lock is lifted, saves stay refused.
+- **Spoofed `pds:sync` messages**: Velocity no longer forwards the channel from clients, Paper and Fabric ignore `load:` once the player is loaded, and own saves are not reapplied.
+- **MySQL/MariaDB**: the `data` column is now `LONGTEXT` (was `TEXT`, 64 KB), existing tables are widened on start. Large inventories failed to save.
+- **Shutdown on Fabric**: disconnect saves after the shutdown save no longer race with it and get refused.
+
+### Fixed (Paper)
+- Paper 1.21 and 1.21.1 hung every load (`Attribute.MAX_HEALTH` does not exist there). Attributes are now resolved at runtime on every version, and stored attribute names from 1.20, 1.21 and 26.x are understood by each other.
+- Attributes are applied before health, advancements before experience; health is clamped to the maximum including modifiers.
+- Health scale is only turned on if it was on, and only turned off by records that store that it was off.
+- Players already online when the plugin is enabled (`/reload`, plugin managers) are loaded.
+- Health is applied after effects and items, so health boost and armor count towards the maximum.
+- `softdepend: [Vault]`, so the economy is found when Vault loads after the plugin.
+- PDC sync never worked (it called a method the API does not have). It now stores the container's NBT and merges it on load.
+- Excluded items are kept in the inventory instead of being deleted on load.
+- The handler choice parses the version: 26.1, 26.1.3+ and 26.3+ no longer fall back to the 1.21 handler.
+- `api-version` is `1.20` again, so the plugin loads on 1.20.x; the wrong `folia-supported` flag is removed.
+- `/pds reload` reloads players whose load had not finished instead of saving their local data; a failed reload disables the plugin.
+- `/pds save` and `PlayerDataSyncAPI#forceSave` report after the save finished; `/pds saveall` is no longer subject to the autosave cooldown.
+- Update check: only a newer version counts, with connect and read timeouts.
+- The save handshake closes the open inventory first, so items on the cursor are saved.
+
+### Fixed (Fabric)
+- The adapters only start on the versions they are built for: 1.20.1, 1.21.4, 26.1.x and 26.2.x. 1.20.2+ and 1.21.5+ crashed on the first save.
+- Saturation and game mode are applied; health is applied after attributes and clamped.
+- A single unreadable item is skipped instead of losing the whole inventory; a failing save keeps the stored record instead of storing no inventory.
+- `storage.type` defaults to `mariadb` (`sqlite` was never supported and now fails with a clear message). `security.encryption_key` is read on Fabric too.
+- The save handshake always answers, even if the save throws or the database is not reachable.
+
+### Fixed (Velocity)
+- Answers carry a request id, so a late answer from an earlier switch no longer releases the next one. Switches another plugin denied no longer trigger a save.
+
+### Fixed (other)
+- `storage.type: postgresql` is accepted; unknown types fail with a clear message instead of connecting to MySQL.
+- A wrong or missing encryption key no longer falls back to old legacy columns (which could apply ancient data); the load fails.
+- Encryption keys with non-ASCII characters work.
+- The Fabric `playerdatasync.properties` is read as UTF-8.
+- One unreadable record no longer stops a backup export.
+- NaN or infinite values (from other plugins) no longer make a record unwritable.
+- Excluded worlds match between Paper names and Fabric dimension ids.
+
+### Tests
+- New tests for the record fingerprint, quick rejoin, failed apply, stale sessions, economy, shutdown, world exclusions and version parsing (22 in total).
+
 ## [26.12-Alpha.2] - 2026-11-26
 ### Fixed
 - **Disabled sync toggles overwrote player values (#7)**: a `sync.*` key that is off stored a placeholder (`SURVIVAL`, 20 health, 0 experience, ...) and every server applied it, e.g. `sync.game_mode: false` set players to Survival on every join and ignored `force-gamemode`. Records now carry `notSynced`; handlers on Paper and Fabric skip those keys and the keys turned off on the loading server. Placeholders stay in the record for older servers.

@@ -39,7 +39,19 @@ public class FabricPlatform implements Platform {
 
     @Override
     public boolean isOnline(UUID uuid) {
-        return server.getPlayerList().getPlayer(uuid) != null;
+        // SyncManager asks from database threads too; the server's player list is a plain HashMap.
+        return online.contains(uuid);
+    }
+
+    /** Players between JOIN and DISCONNECT, kept in a concurrent set for {@link #isOnline}. */
+    private final java.util.Set<UUID> online = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    void markOnline(UUID uuid) {
+        online.add(uuid);
+    }
+
+    void markOffline(UUID uuid) {
+        online.remove(uuid);
     }
 
     @Override

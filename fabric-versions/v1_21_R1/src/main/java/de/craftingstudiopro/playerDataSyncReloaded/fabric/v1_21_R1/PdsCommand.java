@@ -41,8 +41,15 @@ final class PdsCommand {
                     SyncManager manager = manager(ctx, sync);
                     if (manager == null) return 0;
                     ServerPlayerEntity player = EntityArgumentType.getPlayer(ctx, "player");
-                    manager.handleQuit(new FabricPDSPlayer(player));
-                    send(ctx, List.of("Saving data for " + player.getName().getString()));
+                    String name = player.getName().getString();
+                    if (!manager.isLoaded(player.getUuid())) {
+                        send(ctx, List.of("Not saved: the stored data of " + name + " has not been applied on this server yet (see /pds info)."));
+                        return 0;
+                    }
+                    send(ctx, List.of("Saving data for " + name + "..."));
+                    var source = ctx.getSource();
+                    manager.handleQuit(new FabricPDSPlayer(player)).whenComplete((unused, ex) -> source.getServer().execute(() ->
+                            sendTo(source, ex == null ? "Saved data for " + name + "." : "Could not save data for " + name + ": " + ex.getMessage())));
                     return 1;
                 })))
                 .then(literal("load").then(argument("player", EntityArgumentType.player()).executes(ctx -> {
@@ -58,7 +65,7 @@ final class PdsCommand {
                     if (manager == null) return 0;
                     int count = 0;
                     for (ServerPlayerEntity player : ctx.getSource().getServer().getPlayerManager().getPlayerList()) {
-                        manager.handleQuit(new FabricPDSPlayer(player), true);
+                        manager.handleQuit(new FabricPDSPlayer(player), false);
                         count++;
                     }
                     send(ctx, List.of("Triggered save for " + count + " online player(s)."));
@@ -73,6 +80,10 @@ final class PdsCommand {
             ctx.getSource().sendError(Text.literal("PlayerDataSync is not initialized. Check the storage settings and the server log."));
         }
         return manager;
+    }
+
+    private static void sendTo(ServerCommandSource source, String line) {
+        source.sendFeedback(() -> Text.literal(line), false);
     }
 
     private static void send(CommandContext<ServerCommandSource> ctx, List<String> lines) {

@@ -34,7 +34,8 @@ public class SqlStorage implements Storage {
 
     public SqlStorage(Logger logger, String type, String host, int port, String database, String user, String password) {
         this.logger = logger;
-        this.dbType = type.toLowerCase();
+        String normalized = type == null ? "" : type.trim().toLowerCase(java.util.Locale.ROOT);
+        this.dbType = normalized.equals("postgresql") ? "postgres" : normalized;
         this.host = host;
         this.port = port;
         this.database = database;
@@ -49,8 +50,12 @@ public class SqlStorage implements Storage {
     @Override
     public void init() {
         HikariConfig config = new HikariConfig();
-        
+
         String jdbcUrl;
+        if (!dbType.equals("mysql") && !dbType.equals("mariadb") && !dbType.equals("postgres")) {
+            // Without this check "sqlite" or a typo silently became a MySQL connection to ":0".
+            throw new IllegalStateException("storage.type '" + dbType + "' is not supported. Use mysql, mariadb, postgres or mongodb.");
+        }
         if (dbType.equals("postgres")) {
             jdbcUrl = "jdbc:postgresql://" + host + ":" + port + "/" + database;
             config.setDriverClassName("org.postgresql.Driver");
@@ -68,7 +73,7 @@ public class SqlStorage implements Storage {
         config.setMaximumPoolSize(10);
         config.setMinimumIdle(2);
         config.setConnectionTimeout(30000);
-        
+
         if (dbType.contains("mysql")) {
             config.addDataSourceProperty("cachePrepStmts", "true");
             config.addDataSourceProperty("prepStmtCacheSize", "250");
@@ -88,10 +93,10 @@ public class SqlStorage implements Storage {
         String createTableSql = "CREATE TABLE IF NOT EXISTS player_data (" +
                 "uuid VARCHAR(36) PRIMARY KEY," +
                 "name VARCHAR(16) NOT NULL," +
-                "data TEXT NOT NULL," +
+                "data " + dataColumnType() + " NOT NULL," +
                 "last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                 ")";
-        
+
         try (Connection conn = dataSource.getConnection()) {
             try (PreparedStatement ps = conn.prepareStatement(createTableSql)) {
                 ps.execute();
@@ -99,7 +104,8 @@ public class SqlStorage implements Storage {
 
             // Check for missing columns (migration from legacy versions)
             checkAndAddColumn(conn, "name", "VARCHAR(16) NOT NULL DEFAULT 'Unknown'");
-            checkAndAddColumn(conn, "data", "TEXT");
+            checkAndAddColumn(conn, "data", dataColumnType());
+            widenDataColumn(conn);
             checkAndAddColumn(conn, "last_updated", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
             // Stamp of the stored record (savedAt and the writing node) for saveChecked().
             checkAndAddColumn(conn, "pds_saved_at", "BIGINT NULL");
@@ -115,7 +121,7 @@ public class SqlStorage implements Storage {
                         int updated = ps.executeUpdate();
                         logger.info("Migrated " + updated + " records from 'data_json' to 'data'.");
                     }
-                    
+
                     // 2. Drop the old column so future INSERTS don't fail due to "no default value"
                     // We only do this if we are sure the data column now exists and is populated
                     if (columnExists(conn, "data")) {
@@ -135,9 +141,43 @@ public class SqlStorage implements Storage {
         }
     }
 
+    /** MySQL/MariaDB TEXT holds 64 KB, which a full inventory with shulker boxes plus advancements exceeds. */
+    private String dataColumnType() {
+        return dbType.equals("postgres") ? "TEXT" : "LONGTEXT";
+    }
+
+    /** Tables created before 26.12-Alpha.3 have a TEXT column on MySQL/MariaDB: widen it once. */
+    private void widenDataColumn(Connection conn) {
+        if (dbType.equals("postgres")) {
+            return;
+        }
+        String query = "SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "
+                + "AND TABLE_NAME = 'player_data' AND COLUMN_NAME = 'data'";
+        try (PreparedStatement ps = conn.prepareStatement(query); ResultSet rs = ps.executeQuery()) {
+            if (!rs.next()) {
+                return;
+            }
+            String type = rs.getString(1);
+            if (type == null || type.equalsIgnoreCase("longtext")) {
+                return;
+            }
+            logger.info("Widening column 'data' from " + type + " to LONGTEXT (large inventories did not fit). "
+                    + "This copies the table once and can take a moment on large tables...");
+            // MODIFY replaces the whole definition: keep NOT NULL, after filling rows that have none.
+            try (PreparedStatement fill = conn.prepareStatement("UPDATE player_data SET data = '' WHERE data IS NULL")) {
+                fill.executeUpdate();
+            }
+            try (PreparedStatement alter = conn.prepareStatement("ALTER TABLE player_data MODIFY data LONGTEXT NOT NULL")) {
+                alter.execute();
+            }
+        } catch (SQLException e) {
+            logger.log(Level.WARNING, "Could not widen column 'data' to LONGTEXT. Saves of large records may fail.", e);
+        }
+    }
+
     private void checkAndAddColumn(Connection conn, String column, String definition) {
         if (columnExists(conn, column)) return;
-        
+
         // Column likely doesn't exist
         logger.info("Adding missing column '" + column + "' to player_data table...");
         String sql = "ALTER TABLE player_data ADD COLUMN " + column + " " + definition;
@@ -283,7 +323,7 @@ public class SqlStorage implements Storage {
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
                         String rawData = null;
-                        
+
                         // Check 'data' column first
                         try {
                             rawData = rs.getString("data");
@@ -295,7 +335,7 @@ public class SqlStorage implements Storage {
                                 rawData = rs.getString("data_json");
                             } catch (SQLException ignored) {}
                         }
-                        
+
                         // 1. If both are empty, it's likely a legacy record (multi-column)
                         if (rawData == null || rawData.isEmpty()) {
                              return loadLegacyInternal(uuid);
@@ -306,14 +346,17 @@ public class SqlStorage implements Storage {
                             try {
                                 rawData = CryptoUtil.decrypt(rawData, encryptionKey);
                             } catch (Exception e) {
-                                logger.severe("CRITICAL: Failed to decrypt personal data for " + uuid + ". Trying legacy fallback.");
-                                return loadLegacyInternal(uuid);
+                                // Falling back to the old legacy columns here would apply ancient data
+                                // and then save it over the real record: fail the load instead.
+                                throw new IllegalStateException("Could not decrypt the record of " + uuid
+                                        + ". Is security.encryption_key the same on every server?", e);
                             }
                         }
-                        
-                        // 3. Final check: if it still doesn't look like JSON, try legacy
+
+                        // 3. A record that is still not JSON is encrypted with a key this server does not have.
                         if (rawData == null || !rawData.trim().startsWith("{")) {
-                             return loadLegacyInternal(uuid);
+                            throw new IllegalStateException("The record of " + uuid
+                                    + " is not readable JSON. It is probably encrypted and security.encryption_key is missing or different here.");
                         }
 
                         return Optional.of(gson.fromJson(rawData, PlayerData.class));

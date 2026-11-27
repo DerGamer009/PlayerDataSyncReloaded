@@ -1,24 +1,11 @@
 package de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1;
 
-import de.craftingstudiopro.playerDataSyncReloaded.api.PlayerData;
-import de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer;
 import de.craftingstudiopro.playerDataSyncReloaded.common.BukkitBaseVersionHandler;
-import org.bukkit.entity.Player;
 
+/**
+ * Paper handler for this Minecraft line. Everything version-dependent (attributes, max health,
+ * health scale) is resolved at runtime in {@link BukkitBaseVersionHandler}; before 26.12-Alpha.3 the
+ * 1.21 handler referenced Attribute.MAX_HEALTH, which does not exist on 1.21 and 1.21.1.
+ */
 public class VersionHandlerImpl extends BukkitBaseVersionHandler {
-    @Override
-    public PlayerData capture(PDSPlayer player) {
-        return super.capture(player);
-    }
-
-    @Override
-    public void apply(PDSPlayer player, PlayerData data) {
-        super.apply(player, data);
-    }
-
-    @Override
-    protected double getMaxHealth(Player player) {
-        org.bukkit.attribute.AttributeInstance attr = player.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
-        return attr != null ? attr.getBaseValue() : 20.0;
-    }
 }

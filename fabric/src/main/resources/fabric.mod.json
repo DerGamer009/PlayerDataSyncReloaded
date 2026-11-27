@@ -3,7 +3,7 @@
   "id": "playerdatasync",
   "version": "${version}",
   "name": "PlayerDataSync",
-  "description": "Cross-platform player data synchronization. One jar for Minecraft 1.20.1 - 26.2.",
+  "description": "Cross-platform player data synchronization. One jar for Minecraft 1.20.1, 1.21.4, 26.1 and 26.2.",
   "authors": [
     "CraftingStudioPro"
   ],
@@ -21,7 +21,7 @@
   "depends": {
     "fabricloader": ">=0.15.0",
     "fabric-api": "*",
-    "minecraft": ">=1.20.1",
+    "minecraft": ["1.20.1", "1.21.4", ">=26.1 <26.3"],
     "java": ">=17"
   }
 }

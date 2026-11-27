@@ -63,6 +63,12 @@ public class FabricVersionHandler implements VersionHandler {
         data.yaw = player.getYRot();
         data.pitch = player.getXRot();
 
+        // Not captured on Fabric: mark them, so Paper does not apply the empty values
+        // (walk speed 0, no air, no flight, balance 0 ...).
+        for (String key : new String[]{"air_level", "fire_ticks", "freeze_ticks", "arrows_in_body", "absorption", "speeds", "fall_distance", "flight", "pdc", "advancements", "statistics", "player_time", "player_weather", "economy"}) {
+            data.markNotSynced(key);
+        }
+
         return data;
     }
 
@@ -70,13 +76,21 @@ public class FabricVersionHandler implements VersionHandler {
     public void apply(PDSPlayer pdsPlayer, PlayerData data) {
         ServerPlayer player = (ServerPlayer) pdsPlayer.getHandle();
 
-        // A player who left on the death screen is stored with 0 health; applying it kills them again.
         // Values the saving server or this server does not sync are placeholders (issue #7).
-        if (data.isSynced("health") && data.health > 0) {
-            player.setHealth((float) data.health);
+        // Attributes first: setHealth clamps to the current max health.
+        if (data.isSynced("attributes")) {
+            applyAttributes(player, data.attributes);
         }
         if (data.isSynced("food")) {
             player.getFoodData().setFoodLevel(data.foodLevel);
+            player.getFoodData().setSaturation(data.saturation);
+        }
+        if (data.isSynced("game_mode") && data.gameMode != null) {
+            try {
+                player.setGameMode(net.minecraft.world.level.GameType.valueOf(data.gameMode));
+            } catch (IllegalArgumentException e) {
+                LOG.warn("Unknown game mode '{}' for {}", data.gameMode, player.getName().getString());
+            }
         }
         if (data.isSynced("experience")) {
             player.experienceProgress = data.exp;
@@ -93,8 +107,10 @@ public class FabricVersionHandler implements VersionHandler {
         if (data.isSynced("potion_effects") && data.potionEffects != null) {
             applyEffects(player, data.potionEffects);
         }
-        if (data.isSynced("attributes")) {
-            applyAttributes(player, data.attributes);
+        // Health last: setHealth clamps to the maximum, which attributes, effects and armor raise.
+        // A player who left on the death screen is stored with 0 health; applying it kills them again.
+        if (data.isSynced("health") && data.health > 0) {
+            player.setHealth((float) Math.min(data.health, player.getMaxHealth()));
         }
 
         // Location: only present with sync.location: true (filtered on save and before apply).
@@ -144,34 +160,46 @@ public class FabricVersionHandler implements VersionHandler {
             }
             return arr.toString();
         } catch (Exception e) {
-            LOG.warn("Failed to serialize container for {}", player.getName().getString(), e);
-            return null;
+            // Returning null stored the record without the inventory, and the next server kept its
+            // own local inventory. Failing the save keeps the stored record instead.
+            throw new IllegalStateException("Could not store the items of " + player.getName().getString(), e);
         }
     }
 
+    /**
+     * Fails loudly when the stored items are not in this adapter's format (saved by Paper or by a
+     * Fabric 1.20/1.21 server): keeping the local items silently let them be saved over the record.
+     * A single unreadable item is skipped and logged.
+     */
     private void applyContainer(ServerPlayer player, Container container, String json) {
+        var registries = player.level().registryAccess();
+        NonNullList<ItemStack> staging =
+                NonNullList.withSize(container.getContainerSize(), ItemStack.EMPTY);
+        JsonArray slots;
         try {
-            var registries = player.level().registryAccess();
-            NonNullList<ItemStack> staging =
-                    NonNullList.withSize(container.getContainerSize(), ItemStack.EMPTY);
-
-            for (JsonElement el : JsonParser.parseString(json).getAsJsonArray()) {
-                JsonObject slot = el.getAsJsonObject();
-                int idx = slot.get("slot").getAsInt();
-                JsonElement itemEl = slot.get("item");
-                if (itemEl == null || itemEl.isJsonNull()) continue;
-                // A shrunken container (version downgrade) must not blow up the whole restore.
-                if (idx < 0 || idx >= staging.size()) continue;
+            slots = JsonParser.parseString(json).getAsJsonArray();
+        } catch (Exception e) {
+            throw new IllegalStateException("The stored items of " + player.getName().getString()
+                    + " were saved by Paper or by a Fabric server for another Minecraft version and cannot be read here.", e);
+        }
+        for (JsonElement el : slots) {
+            JsonObject slot = el.getAsJsonObject();
+            int idx = slot.get("slot").getAsInt();
+            JsonElement itemEl = slot.get("item");
+            if (itemEl == null || itemEl.isJsonNull()) continue;
+            // A shrunken container (version downgrade) must not blow up the whole restore.
+            if (idx < 0 || idx >= staging.size()) continue;
+            try {
                 DataResult<ItemStack> result =
                     ItemStack.CODEC.parse(registries.createSerializationContext(JsonOps.INSTANCE), itemEl);
                 staging.set(idx, result.getOrThrow());
+            } catch (Exception e) {
+                LOG.error("Skipped an unreadable item in slot {} of {}: {}", idx, player.getName().getString(), e.getMessage());
             }
+        }
 
-            for (int i = 0; i < container.getContainerSize(); i++) {
-                container.setItem(i, staging.get(i));
-            }
-        } catch (Exception e) {
-            LOG.warn("Failed to restore container for {}", player.getName().getString(), e);
+        for (int i = 0; i < container.getContainerSize(); i++) {
+            container.setItem(i, staging.get(i));
         }
     }
 

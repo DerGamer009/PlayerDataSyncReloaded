@@ -3,6 +3,7 @@ package de.craftingstudiopro.playerDataSyncReloaded.common;
 import com.google.gson.Gson;
 import de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer;
 import de.craftingstudiopro.playerDataSyncReloaded.api.PlayerData;
+import de.craftingstudiopro.playerDataSyncReloaded.common.util.Versions;
 import de.craftingstudiopro.playerDataSyncReloaded.api.VersionHandler;
 import de.craftingstudiopro.playerDataSyncReloaded.common.storage.Storage;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,6 +52,8 @@ class SyncManagerSwitchTest {
         final Map<UUID, Row> rows = new ConcurrentHashMap<>();
         volatile CompletableFuture<Void> gate = CompletableFuture.completedFuture(null);
         final AtomicInteger failLoads = new AtomicInteger();
+        /** Holds checked saves back until it completes, to recreate a slow quit save. */
+        volatile CompletableFuture<Void> saveGate = CompletableFuture.completedFuture(null);
 
         @Override public void init() {}
         @Override public void close() {}
@@ -62,13 +65,18 @@ class SyncManagerSwitchTest {
         }
 
         @Override
-        public synchronized CompletableFuture<Boolean> saveChecked(PlayerData data, long basis, String nodeId) {
-            Row row = rows.get(data.uuid);
-            boolean ok = row == null || nodeId.equals(row.savedBy) || row.savedAt == basis;
-            if (ok) {
-                rows.put(data.uuid, new Row(GSON.toJson(data), data.savedAt, nodeId));
-            }
-            return CompletableFuture.completedFuture(ok);
+        public CompletableFuture<Boolean> saveChecked(PlayerData data, long basis, String nodeId) {
+            String json = GSON.toJson(data);
+            return saveGate.thenApplyAsync(v -> {
+                synchronized (this) {
+                    Row row = rows.get(data.uuid);
+                    boolean ok = row == null || nodeId.equals(row.savedBy) || row.savedAt == basis;
+                    if (ok) {
+                        rows.put(data.uuid, new Row(json, data.savedAt, nodeId));
+                    }
+                    return ok;
+                }
+            });
         }
 
         @Override
@@ -91,10 +99,15 @@ class SyncManagerSwitchTest {
     }
 
     /** One backend: Platform + VersionHandler (= the server's local player state) + SyncManager. */
-    static final class Server implements Platform, VersionHandler {
+    static class Server implements Platform, VersionHandler {
         final String name;
         final Map<UUID, String> inventory = new ConcurrentHashMap<>();
         final Map<UUID, String> gameMode = new ConcurrentHashMap<>();
+        final Map<UUID, Integer> level = new ConcurrentHashMap<>();
+        /** The player object of the current session; a reconnect gets a new one. */
+        final Map<UUID, Object> session = new ConcurrentHashMap<>();
+        final List<Object> appliedTo = java.util.Collections.synchronizedList(new ArrayList<>());
+        final AtomicInteger failApply = new AtomicInteger();
         final Set<UUID> online = ConcurrentHashMap.newKeySet();
         final Map<String, String> config = new HashMap<>();
         final List<String> log = new ArrayList<>();
@@ -116,10 +129,11 @@ class SyncManagerSwitchTest {
         }
 
         PDSPlayer player(UUID id) {
+            Object handle = session.computeIfAbsent(id, k -> new Object());
             return new PDSPlayer() {
                 @Override public UUID getUniqueId() { return id; }
                 @Override public String getName() { return "Steve"; }
-                @Override public Object getHandle() { return null; }
+                @Override public Object getHandle() { return handle; }
                 @Override public String getWorldName() { return "world"; }
             };
         }
@@ -142,17 +156,32 @@ class SyncManagerSwitchTest {
             data.health = 20;
             data.inventoryContents = inventory.get(player.getUniqueId());
             data.gameMode = gameMode.getOrDefault(player.getUniqueId(), "SURVIVAL");
+            data.level = level.getOrDefault(player.getUniqueId(), 0);
             return data;
         }
         @Override
         public void apply(PDSPlayer player, PlayerData data) {
             // Mirrors BukkitBaseVersionHandler: only synced values are applied.
+            if (failApply.getAndDecrement() > 0) {
+                throw new IllegalStateException("simulated apply failure");
+            }
+            appliedTo.add(player.getHandle());
+            if (data.isSynced("experience")) level.put(player.getUniqueId(), data.level);
             if (data.isSynced("inventory")) inventory.put(player.getUniqueId(), data.inventoryContents);
             if (data.isSynced("game_mode") && data.gameMode != null) gameMode.put(player.getUniqueId(), data.gameMode);
         }
         @Override public String serializeInventory(PDSPlayer player) { return inventory.get(player.getUniqueId()); }
         @Override public void deserializeInventory(PDSPlayer player, String data) { inventory.put(player.getUniqueId(), data); }
         @Override public void setItemExclusions(List<String> exclusions) {}
+
+        /** The player disconnects and connects again: a new player object. */
+        void reconnect(UUID id) {
+            sync.handleDisconnect(player(id));
+            online.remove(id);
+            session.remove(id);
+            online.add(id);
+            sync.handleJoin(player(id));
+        }
 
         void join(UUID id) throws Exception {
             online.add(id);
@@ -389,5 +418,202 @@ class SyncManagerSwitchTest {
         assertEquals("NETHER", WorldNames.environmentFor("minecraft:the_nether"));
         assertEquals("NORMAL", WorldNames.environmentFor("world"));
         assertEquals(null, WorldNames.environmentFor("mymod:mining"));
+    }
+
+    @Test
+    void changeWithoutInventoryChangeIsSaved() throws Exception {
+        // Before 26.12-Alpha.3 an unchanged inventory skipped the whole save: XP, health, ender chest ...
+        a.join(steve);
+        a.inventory.put(steve, "pickaxe");
+        a.quit(steve);
+        b.join(steve);
+        b.level.put(steve, 30); // XP farm, inventory untouched
+        b.quit(steve);
+        a.join(steve);
+        assertEquals(30, a.level.get(steve));
+        assertEquals("pickaxe", a.inventory.get(steve));
+    }
+
+    @Test
+    void unchangedRecordIsNotWrittenTwice() throws Exception {
+        a.join(steve);
+        a.inventory.put(steve, "x");
+        a.autosave(steve);
+        a.autosave(steve);
+        assertEquals(1, a.sync.getStatsSnapshot().skippedByHash);
+    }
+
+    @Test
+    void quickRejoinWaitsForTheQuitSave() throws Exception {
+        a.join(steve);
+        a.inventory.put(steve, "1");
+        a.quit(steve);
+
+        a.join(steve);
+        a.inventory.put(steve, "2");
+        storage.saveGate = new CompletableFuture<>();
+        a.sync.handleDisconnect(a.player(steve)); // save of "2" is still being written
+        a.online.remove(steve);
+        a.online.add(steve);
+        a.inventory.put(steve, "local");
+        a.sync.handleJoin(a.player(steve));
+        Thread.sleep(100);
+        assertEquals("local", a.inventory.get(steve), "the load waits for the save");
+        storage.saveGate.complete(null);
+        Thread.sleep(200);
+        a.idle(steve);
+
+        assertEquals("2", a.inventory.get(steve));
+        assertEquals("2", storage.stored(steve));
+        a.inventory.put(steve, "3");
+        a.quit(steve);
+        assertEquals("3", storage.stored(steve));
+    }
+
+    @Test
+    void failedApplyKeepsThePlayerUnloadedAndRetries() throws Exception {
+        a.join(steve);
+        a.inventory.put(steve, "good");
+        a.quit(steve);
+
+        b.inventory.put(steve, "stale local");
+        b.failApply.set(1);
+        b.join(steve);
+        assertTrue(!b.sync.isLoaded(steve), "a failed apply must not count as loaded");
+        b.autosave(steve);
+        assertEquals("good", storage.stored(steve), "the local inventory is never saved over the record");
+
+        Thread.sleep(1500);
+        b.idle(steve);
+        assertTrue(b.sync.isLoaded(steve));
+        assertEquals("good", b.inventory.get(steve));
+    }
+
+    @Test
+    void loadForAPreviousSessionIsNotApplied() throws Exception {
+        a.join(steve);
+        a.inventory.put(steve, "stored");
+        a.quit(steve);
+
+        storage.gate = new CompletableFuture<>();
+        a.joinStale(steve);
+        Object first = a.session.get(steve);
+        Thread.sleep(50);
+        a.reconnect(steve);
+        Object second = a.session.get(steve);
+        storage.gate.complete(null);
+        Thread.sleep(200);
+        a.idle(steve);
+
+        assertTrue(!a.appliedTo.contains(first), "the record must not go to the old player object");
+        assertTrue(a.appliedTo.contains(second), "the new session gets the record");
+        assertTrue(a.sync.isLoaded(steve));
+    }
+
+    @Test
+    void balanceIsNotSyncedWithoutAnEconomy() throws Exception {
+        a.join(steve);
+        a.inventory.put(steve, "x");
+        a.quit(steve);
+        PlayerData stored = storage.load(steve).get(5, TimeUnit.SECONDS).orElseThrow();
+        assertTrue(!stored.isSynced("economy"), "a server without Vault must not store balance 0 as the balance");
+    }
+
+    @Test
+    void shutdownSkipsTheDisconnectSavesThatFollow() throws Exception {
+        a.join(steve);
+        a.inventory.put(steve, "before stop");
+        a.sync.shutdown(List.of(a.player(steve))).get(5, TimeUnit.SECONDS);
+        a.inventory.put(steve, "after stop");
+        a.quit(steve);
+        assertEquals("before stop", storage.stored(steve));
+    }
+
+    @Test
+    void excludedWorldsMatchAcrossPlatforms() {
+        a.config.put("dummy", "x");
+        Server fabric = new Server("F", storage) {
+            @Override public List<String> getConfigStringList(String path) {
+                return path.equals("exclusions.worlds") ? List.of("world_nether") : List.of();
+            }
+        };
+        fabric.sync.refreshExclusions();
+        UUID id = UUID.randomUUID();
+        fabric.online.add(id);
+        PDSPlayer inNether = new PDSPlayer() {
+            @Override public UUID getUniqueId() { return id; }
+            @Override public String getName() { return "Alex"; }
+            @Override public Object getHandle() { return null; }
+            @Override public String getWorldName() { return "minecraft:the_nether"; }
+        };
+        fabric.sync.handleJoin(inNether);
+        assertEquals(1, fabric.sync.getStatsSnapshot().skippedByWorld);
+    }
+
+    @Test
+    void pluginVersionsCompare() {
+        assertTrue(Versions.compare("26.12-Alpha.3", "26.12-Alpha.2") > 0);
+        assertTrue(Versions.compare("26.12-Alpha.1", "26.11-Stable") > 0);
+        assertTrue(Versions.compare("26.11-Stable", "26.11-Beta.4") > 0);
+        assertTrue(Versions.compare("26.10-ALPHA.001", "26.10-Alpha.1") == 0);
+        assertTrue(Versions.compare("26.9-Release", "26.10-ALPHA.001") < 0);
+        assertTrue(Versions.compare("26.11-Stable", "26.12-Alpha.2") < 0);
+        assertTrue(Versions.isPreRelease("26.12-Alpha.2"));
+        assertTrue(!Versions.isPreRelease("26.11-Stable"));
+    }
+
+    @Test
+    void handlerChoiceFollowsTheServerVersion() {
+        assertEquals("v1_20_R1", Versions.paperHandlerFor("1.20.6-R0.1-SNAPSHOT"));
+        assertEquals("v1_21_R1", Versions.paperHandlerFor("1.21.1-R0.1-SNAPSHOT"));
+        assertEquals("v26_1", Versions.paperHandlerFor("1.21.4-R0.1-SNAPSHOT"));
+        assertEquals("v26_1", Versions.paperHandlerFor("26.1-R0.1-SNAPSHOT"));
+        assertEquals("v26_1", Versions.paperHandlerFor("26.1.3-R0.1-SNAPSHOT"));
+        assertEquals("v26_2", Versions.paperHandlerFor("26.2-R0.1-SNAPSHOT"));
+        assertEquals("v26_2", Versions.paperHandlerFor("26.3-R0.1-SNAPSHOT"));
+        assertEquals("v26_2", Versions.paperHandlerFor("26.20-R0.1-SNAPSHOT"));
+        assertEquals(null, Versions.paperHandlerFor("1.19.4-R0.1-SNAPSHOT"));
+
+        assertEquals("v1_20_R1", Versions.fabricAdapterFor("1.20.1"));
+        assertEquals(null, Versions.fabricAdapterFor("1.20.4"));
+        assertEquals("v1_21_R1", Versions.fabricAdapterFor("1.21.4"));
+        assertEquals(null, Versions.fabricAdapterFor("1.21.5"));
+        assertEquals("v26_1_R1", Versions.fabricAdapterFor("26.1"));
+        assertEquals("v26_1_R1", Versions.fabricAdapterFor("26.1.2"));
+        assertEquals(null, Versions.fabricAdapterFor("26.10"));
+        assertEquals("v26_2_R1", Versions.fabricAdapterFor("26.2"));
+        assertEquals(null, Versions.fabricAdapterFor("26.3"));
+    }
+    @Test
+    void respawnDuringLoadStillApplies() throws Exception {
+        // Fabric replaces the player object on respawn; the load must still reach the player.
+        a.join(steve);
+        a.inventory.put(steve, "stored");
+        a.quit(steve);
+
+        storage.gate = new CompletableFuture<>();
+        a.joinStale(steve);
+        Thread.sleep(50);
+        Object respawned = new Object();
+        a.session.put(steve, respawned);
+        storage.gate.complete(null);
+        Thread.sleep(200);
+        a.idle(steve);
+
+        assertTrue(a.sync.isLoaded(steve));
+        assertTrue(a.appliedTo.contains(respawned));
+    }
+
+    @Test
+    void lockIsLiftedWhenTheLoadFailsForGood() throws Exception {
+        a.join(steve);
+        a.quit(steve);
+        storage.failLoads.set(10);
+        a.join(steve);
+        assertTrue(a.sync.isWaitingForData(steve));
+        Thread.sleep(7600);
+        a.idle(steve);
+        assertTrue(!a.sync.isLoaded(steve), "saves stay refused");
+        assertTrue(!a.sync.isWaitingForData(steve), "but the player is no longer held in place");
     }
 }

@@ -53,22 +53,28 @@ public class BackupManager {
     public CompletableFuture<Void> exportBackup(String name) {
         File file = new File(backupDir, name + ".json.gz");
         logger.info("Starting backup export to: " + file.getName());
-        
+
         return storage.getAllStoredUUIDs().thenCompose(uuids -> {
             List<PlayerData> allData = new ArrayList<>();
             CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
-            
+
             AtomicInteger count = new AtomicInteger(0);
             for (UUID uuid : uuids) {
-                chain = chain.thenCompose(v -> storage.load(uuid).thenAccept(opt -> {
-                   opt.ifPresent(allData::add);
+                chain = chain.thenCompose(v -> storage.load(uuid).handle((opt, ex) -> {
+                   if (ex != null) {
+                       // One unreadable record must not stop the backup of everyone else.
+                       logger.warning("Backup: skipped " + uuid + ": " + ex.getMessage());
+                   } else {
+                       opt.ifPresent(allData::add);
+                   }
                    int current = count.incrementAndGet();
                    if (current % 50 == 0 || current == uuids.size()) {
                        logger.info("Export Progress: " + current + "/" + uuids.size());
                    }
+                   return null;
                 }));
             }
-            
+
             return chain.thenRun(() -> {
                 try (OutputStream os = new GZIPOutputStream(new FileOutputStream(file))) {
                     String json = gson.toJson(allData);
@@ -92,9 +98,9 @@ public class BackupManager {
             try (InputStream is = new GZIPInputStream(new FileInputStream(file))) {
                 BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
                 List<PlayerData> dataList = gson.fromJson(reader, new TypeToken<List<PlayerData>>(){}.getType());
-                
+
                 logger.info("Found " + dataList.size() + " players in backup. Importing...");
-                
+
                 CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
                 AtomicInteger count = new AtomicInteger(0);
                 for (PlayerData data : dataList) {

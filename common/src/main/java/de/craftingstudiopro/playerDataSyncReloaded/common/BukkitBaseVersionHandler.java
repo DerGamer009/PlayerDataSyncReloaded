@@ -46,6 +46,9 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
         data.freezeTicks = player.getFreezeTicks();
         data.arrowsInBody = player.getArrowsInBody();
         data.absorptionAmount = player.getAbsorptionAmount();
+        // -1 = scaling off. getHealthScale() reports 20 even when scaling is off. Records without this
+        // information (0: older builds, 1.20/1.21, Fabric) leave the scaling as it is.
+        data.healthScale = player.isHealthScaled() ? player.getHealthScale() : -1.0;
 
         // Exp
         data.level = player.getLevel();
@@ -54,7 +57,7 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
 
         // Status
         data.gameMode = player.getGameMode().name();
-        
+
         try {
             data.isFlying = player.isFlying();
             data.canFly = player.getAllowFlight();
@@ -78,13 +81,13 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
         data.playerWeather = player.getPlayerWeather() != null ? player.getPlayerWeather().name() : null;
 
         // PDC
+        // Before 26.12-Alpha.3 this called a getValues() method the API does not have, so the PDC was
+        // never stored. Now the container's own NBT bytes, with a prefix to tell the format apart.
         try {
-            // Using reflection to support varied API versions for getValues()
-            java.lang.reflect.Method getValuesMethod = player.getPersistentDataContainer().getClass().getMethod("getValues");
-            Map<org.bukkit.NamespacedKey, Object> values = (Map<org.bukkit.NamespacedKey, Object>) getValuesMethod.invoke(player.getPersistentDataContainer());
-            data.persistentDataContainer = SerializationUtil.toBase64(values);
-        } catch (Exception ignored) {
-            // Fallback for older versions or issues
+            byte[] bytes = player.getPersistentDataContainer().serializeToBytes();
+            data.persistentDataContainer = PDC_PREFIX + java.util.Base64.getEncoder().encodeToString(bytes);
+        } catch (Exception | LinkageError e) {
+            Bukkit.getLogger().warning("[PlayerDataSync] Could not store the persistent data of " + player.getName() + ": " + e.getMessage());
         }
 
         // Attributes
@@ -100,12 +103,33 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
     @Override
     public void apply(PDSPlayer pdsPlayer, PlayerData data) {
         Player player = (Player) pdsPlayer.getHandle();
-        // Stats
-        // A player who left on the death screen is stored with 0 health; applying it kills them again.
         // Every block checks data.isSynced(...): a value the saving server or this server does not
         // sync is a placeholder and must not replace the player's own value (issue #7).
-        if (data.isSynced("health") && data.health > 0) {
-            player.setHealth(Math.min(data.health, getMaxHealth(player)));
+
+        // Attributes first: health is clamped to the maximum, so a stored 40 health with a max
+        // health of 40 would otherwise be cut to the 20 the player has before the attributes apply.
+        if (data.isSynced("attributes")) {
+            applyAttributes(player, data.attributes);
+        }
+        // Advancements before experience: their rewards would add to the synced experience.
+        if (data.isSynced("statistics")) {
+            try {
+                applyStatistics(player, (Map<String, Integer>) SerializationUtil.fromBase64(data.statistics));
+            } catch (Exception ignored) {}
+        }
+        if (data.isSynced("advancements")) {
+            try {
+                applyAdvancements(player, (java.util.List<String>) SerializationUtil.fromBase64(data.advancements));
+            } catch (Exception ignored) {}
+        }
+
+        // Stats (health is set further down, after effects and items that raise the maximum)
+        if (data.isSynced("health")) {
+            if (data.healthScale > 0) {
+                player.setHealthScale(data.healthScale);
+            } else if (data.healthScale == -1.0) {
+                player.setHealthScaled(false);
+            }
         }
         if (data.isSynced("food")) {
             player.setFoodLevel(data.foodLevel);
@@ -154,38 +178,27 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
         // Inventory
         if (data.isSynced("inventory") && data.inventoryContents != null) {
             deserializeInventory(pdsPlayer, data.inventoryContents);
-            player.getInventory().setHeldItemSlot(data.selectedSlot);
+            player.getInventory().setHeldItemSlot(Math.max(0, Math.min(8, data.selectedSlot)));
         }
-        if (data.isSynced("ender_chest")) {
-            try {
-                ItemStack[] ec = (ItemStack[]) SerializationUtil.fromBase64(data.enderChestContents);
-                player.getEnderChest().setContents(filterItems(ec));
-            } catch (Exception ignored) {}
+        if (data.isSynced("ender_chest") && data.enderChestContents != null) {
+            player.getEnderChest().setContents(mergeExcluded(player, player.getEnderChest().getContents(),
+                    readItems(data.enderChestContents, "ender chest")));
         }
 
-        // PDC
-        if (data.isSynced("pdc") && data.persistentDataContainer != null) {
-            try {
-                Map<org.bukkit.NamespacedKey, Object> values = (Map<org.bukkit.NamespacedKey, Object>) SerializationUtil.fromBase64(data.persistentDataContainer);
-                values.forEach((key, val) -> player.getPersistentDataContainer().set(key, (org.bukkit.persistence.PersistentDataType) getDataType(val), val));
-            } catch (Exception ignored) {}
+        // Health last: the maximum includes health boost effects and armor applied above.
+        // A player who left on the death screen is stored with 0 health; applying it kills them again.
+        if (data.isSynced("health") && data.health > 0) {
+            player.setHealth(Math.min(data.health, getMaxHealth(player)));
         }
 
-        // Attributes
-        if (data.isSynced("attributes")) {
-            applyAttributes(player, data.attributes);
-        }
-
-        // Stats & Advancements
-        if (data.isSynced("statistics")) {
+        // PDC: merged, so keys other plugins keep per server are not removed.
+        if (data.isSynced("pdc") && data.persistentDataContainer != null && data.persistentDataContainer.startsWith(PDC_PREFIX)) {
             try {
-                applyStatistics(player, (Map<String, Integer>) SerializationUtil.fromBase64(data.statistics));
-            } catch (Exception ignored) {}
-        }
-        if (data.isSynced("advancements")) {
-            try {
-                applyAdvancements(player, (java.util.List<String>) SerializationUtil.fromBase64(data.advancements));
-            } catch (Exception ignored) {}
+                byte[] bytes = java.util.Base64.getDecoder().decode(data.persistentDataContainer.substring(PDC_PREFIX.length()));
+                player.getPersistentDataContainer().readFromBytes(bytes, false);
+            } catch (Exception | LinkageError e) {
+                Bukkit.getLogger().warning("[PlayerDataSync] Could not apply the persistent data of " + player.getName() + ": " + e.getMessage());
+            }
         }
 
         // Time & Weather
@@ -230,14 +243,20 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
             }
         }
     }
-    
+
+    /**
+     * Base values of all attributes, keyed by namespaced key. Uses the registry and {@link org.bukkit.Keyed}
+     * rather than the enum: Attribute is an enum up to 1.21.1 and an interface from 1.21.2 on.
+     */
     protected Map<String, Double> captureAttributes(Player player) {
         Map<String, Double> map = new HashMap<>();
-        for (Attribute attr : Attribute.values()) {
-            AttributeInstance inst = player.getAttribute(attr);
-            if (inst != null) {
-                map.put(attr.name(), inst.getBaseValue());
-            }
+        for (Object entry : org.bukkit.Registry.ATTRIBUTE) {
+            try {
+                AttributeInstance inst = player.getAttribute((Attribute) entry);
+                if (inst != null) {
+                    map.put(((org.bukkit.Keyed) entry).getKey().toString(), inst.getBaseValue());
+                }
+            } catch (Exception ignored) {}
         }
         return map;
     }
@@ -245,12 +264,52 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
     protected void applyAttributes(Player player, Map<String, Double> attributes) {
         if (attributes == null) return;
         attributes.forEach((name, value) -> {
+            if (value == null) return;
+            Attribute attr = resolveAttribute(name);
+            if (attr == null) return;
             try {
-                Attribute attr = Attribute.valueOf(name);
                 AttributeInstance inst = player.getAttribute(attr);
                 if (inst != null) inst.setBaseValue(value);
             } catch (Exception ignored) {}
         });
+    }
+
+    /**
+     * Finds an attribute for any stored name: {@code minecraft:max_health} (1.21.2+),
+     * {@code minecraft:generic.max_health} (up to 1.21.1), or the enum names {@code MAX_HEALTH} and
+     * {@code GENERIC_MAX_HEALTH} older records used. Without this, records moved between versions
+     * dropped every attribute.
+     */
+    protected static Attribute resolveAttribute(String stored) {
+        if (stored == null || stored.isBlank()) return null;
+        String name = stored.trim().toLowerCase(java.util.Locale.ROOT);
+        String namespace = "minecraft";
+        int colon = name.indexOf(':');
+        if (colon >= 0) {
+            namespace = name.substring(0, colon);
+            name = name.substring(colon + 1);
+        }
+        if (!stored.contains(".") && !stored.contains(":")) {
+            // Enum constant: GENERIC_MAX_HEALTH, MAX_HEALTH, PLAYER_BLOCK_INTERACTION_RANGE ...
+            for (String group : new String[]{"generic_", "player_", "zombie_", "horse_"}) {
+                if (name.startsWith(group)) {
+                    name = name.substring(group.length());
+                    break;
+                }
+            }
+        }
+        String base = name;
+        int dot = base.indexOf('.');
+        if (dot >= 0) {
+            base = base.substring(dot + 1);
+        }
+        for (String candidate : new String[]{name, base, "generic." + base, "player." + base, "zombie." + base, "horse." + base}) {
+            org.bukkit.NamespacedKey key = org.bukkit.NamespacedKey.fromString(namespace + ":" + candidate);
+            if (key == null) continue;
+            Object attr = org.bukkit.Registry.ATTRIBUTE.get(key);
+            if (attr != null) return (Attribute) attr;
+        }
+        return null;
     }
 
     protected Map<String, Integer> captureStatistics(Player player) {
@@ -299,15 +358,17 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
         });
     }
 
-    private Object getDataType(Object val) {
-        if (val instanceof String) return org.bukkit.persistence.PersistentDataType.STRING;
-        if (val instanceof Integer) return org.bukkit.persistence.PersistentDataType.INTEGER;
-        if (val instanceof Double) return org.bukkit.persistence.PersistentDataType.DOUBLE;
-        if (val instanceof Byte) return org.bukkit.persistence.PersistentDataType.BYTE;
-        return org.bukkit.persistence.PersistentDataType.STRING; // Fallback
-    }
+    private static final String PDC_PREFIX = "pdc1:";
 
-    protected abstract double getMaxHealth(Player player);
+    /** Current maximum health including modifiers (armor, effects), read after the attributes are applied. */
+    protected double getMaxHealth(Player player) {
+        Attribute maxHealth = resolveAttribute("max_health");
+        if (maxHealth != null) {
+            AttributeInstance inst = player.getAttribute(maxHealth);
+            if (inst != null) return inst.getValue();
+        }
+        return 20.0;
+    }
 
     @Override
     public String serializeInventory(PDSPlayer pdsPlayer) {
@@ -318,12 +379,58 @@ public abstract class BukkitBaseVersionHandler implements VersionHandler {
     @Override
     public void deserializeInventory(PDSPlayer pdsPlayer, String inventory) {
         Player player = (Player) pdsPlayer.getHandle();
+        ItemStack[] stored = readItems(inventory, "inventory");
+        player.getInventory().setContents(mergeExcluded(player, player.getInventory().getContents(), stored));
+    }
+
+    /**
+     * Reads stored items. Fails loudly: swallowing the error kept the server's local inventory, marked
+     * the player as loaded and later saved that local inventory over the real record.
+     */
+    protected ItemStack[] readItems(String serialized, String what) {
+        Object value;
         try {
-            ItemStack[] contents = (ItemStack[]) SerializationUtil.fromBase64(inventory);
-            player.getInventory().setContents(filterItems(contents));
+            value = SerializationUtil.fromBase64(serialized);
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new IllegalStateException("Could not read the stored " + what
+                    + ". It was probably saved by a Fabric server or another Minecraft version (" + e.getMessage() + ")", e);
         }
+        if (!(value instanceof ItemStack[])) {
+            throw new IllegalStateException("The stored " + what + " is not a Paper item list.");
+        }
+        return filterItems((ItemStack[]) value);
+    }
+
+    /**
+     * Excluded items are not stored, so their slots arrive empty. Keep the player's local excluded
+     * items there instead of deleting them; one whose slot is now taken goes into a free slot, or is
+     * dropped at the player's feet.
+     */
+    protected ItemStack[] mergeExcluded(Player player, ItemStack[] local, ItemStack[] stored) {
+        if (itemExclusions == null || itemExclusions.isEmpty() || local == null) return stored;
+        ItemStack[] merged = java.util.Arrays.copyOf(stored, Math.max(stored.length, 0));
+        List<ItemStack> homeless = new ArrayList<>();
+        for (int i = 0; i < local.length; i++) {
+            ItemStack item = local[i];
+            if (item == null || !itemExclusions.contains(item.getType().name())) continue;
+            if (i < merged.length && (merged[i] == null || merged[i].getType().isAir())) {
+                merged[i] = item;
+            } else {
+                homeless.add(item);
+            }
+        }
+        for (ItemStack item : homeless) {
+            boolean placed = false;
+            for (int i = 0; i < merged.length && i < 36; i++) {
+                if (merged[i] == null || merged[i].getType().isAir()) {
+                    merged[i] = item;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) player.getWorld().dropItemNaturally(player.getLocation(), item);
+        }
+        return merged;
     }
 
     protected ItemStack[] filterItems(ItemStack[] contents) {
