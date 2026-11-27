@@ -33,8 +33,17 @@ public class SyncManager {
     private final Set<UUID> loaded = ConcurrentHashMap.newKeySet();
     /** savedAt of the record this server applied, so the same record is not applied twice. */
     private final ConcurrentHashMap<UUID, Long> appliedSavedAt = new ConcurrentHashMap<>();
-    /** Serialized inventory last saved or applied; an identical inventory skips the save. */
-    private final ConcurrentHashMap<UUID, String> lastSavedInventory = new ConcurrentHashMap<>();
+    /**
+     * The whole filtered record (without its stamps) as last saved in this session. A save of an
+     * identical record is skipped. Cleared on every apply, so a record loaded from another server is
+     * always written back once.
+     */
+    private final ConcurrentHashMap<UUID, String> lastSavedFingerprint = new ConcurrentHashMap<>();
+    /** Saves still being written, so a quick rejoin loads only after this server's quit save has landed. */
+    private final ConcurrentHashMap<UUID, CompletableFuture<Void>> inFlightSaves = new ConcurrentHashMap<>();
+    private final com.google.gson.Gson fingerprintGson = new com.google.gson.Gson();
+    /** Set once the server shuts down: disconnect saves after the shutdown save would only race with it. */
+    private volatile boolean stopping;
     private final ConcurrentHashMap<UUID, Long> lastSaveMillis = new ConcurrentHashMap<>();
     /** Server name stored in the applied record ({@code /pds info}). */
     private final ConcurrentHashMap<UUID, String> appliedSavedBy = new ConcurrentHashMap<>();
@@ -50,6 +59,13 @@ public class SyncManager {
     /** Saves refused for this player since the join ({@code /pds info}). */
     private final ConcurrentHashMap<UUID, Integer> refusedSaves = new ConcurrentHashMap<>();
     private final Set<UUID> recheckScheduled = ConcurrentHashMap.newKeySet();
+    /**
+     * Counts disconnects per player. A load only applies if no disconnect happened since it started.
+     * The player object is not used for this: Fabric replaces it on every respawn.
+     */
+    private final ConcurrentHashMap<UUID, Long> sessions = new ConcurrentHashMap<>();
+    /** Players whose load failed for good: still not loaded (no saves), but no longer locked on Paper. */
+    private final Set<UUID> gaveUp = ConcurrentHashMap.newKeySet();
     private static final long BASIS_UNCHECKED = -1L;
     private static final int MAX_LOAD_RETRIES = 3;
     private final Set<String> excludedWorlds = ConcurrentHashMap.newKeySet();
@@ -158,7 +174,7 @@ public class SyncManager {
                     .invoke(economy, player.getHandle())).doubleValue();
         } catch (Throwable t) {
             logger.warning("Failed to read balance for " + player.getName() + ": " + t.getMessage());
-            return 0.0;
+            return Double.NaN;
         }
     }
 
@@ -206,6 +222,19 @@ public class SyncManager {
             return;
         }
 
+        CompletableFuture<Void> pendingSave = inFlightSaves.get(uuid);
+        if (pendingSave != null && !pendingSave.isDone()) {
+            // The player rejoined while this server's quit save is still being written: reading now
+            // would apply the record before it and the save would then overwrite nothing useful.
+            pendingSave.handle((unused, ex) -> null).thenRun(() -> platform.runTask(() -> {
+                PDSPlayer current = platform.getPlayer(uuid);
+                if (current != null) {
+                    handleJoin(current, force);
+                }
+            }));
+            return;
+        }
+
         if (syncInProgress.putIfAbsent(uuid, true) != null) {
             reloadRequested.merge(uuid, force, Boolean::logicalOr);
             return;
@@ -219,117 +248,146 @@ public class SyncManager {
         }
 
         long startTime = System.currentTimeMillis();
+        long session = sessions.getOrDefault(uuid, 0L);
+        gaveUp.remove(uuid);
         storage.load(uuid).thenAccept(optionalData -> {
             if (optionalData.isPresent()) {
                 PlayerData data = optionalData.get();
-                platform.runTask(() -> applyData(player, data, startTime, force));
+                platform.runTask(() -> applyData(player, data, startTime, force, session));
             } else {
                 loaded.add(uuid);
                 basisSavedAt.put(uuid, 0L);
                 appliedSavedBy.remove(uuid);
                 loadRetries.remove(uuid);
                 loadSuccess.increment();
-                finishLoad(player);
+                finishLoad(uuid);
                 scheduleRecheck(uuid);
             }
         }).exceptionally(ex -> {
-            finishLoad(player);
-            loadFailed.increment();
-            trackError("load data for " + player.getName(), ex);
-
-            int attempt = loadRetries.merge(uuid, 1, Integer::sum);
-            if (attempt <= MAX_LOAD_RETRIES) {
-                long delay = 1000L << (attempt - 1);
-                logger.warning("Retrying load for " + player.getName() + " in " + delay + " ms (attempt " + attempt + "/" + MAX_LOAD_RETRIES + ").");
-                CompletableFuture.delayedExecutor(delay, TimeUnit.MILLISECONDS).execute(() -> platform.runTask(() -> {
-                    PDSPlayer current = platform.getPlayer(uuid);
-                    if (current != null && platform.isOnline(uuid)) {
-                        handleJoin(current, force);
-                    }
-                }));
-                return null;
-            }
-            loadRetries.remove(uuid);
-
-            String syncFailed = platform.getConfigString("messages.sync_failed", "&cFailed to sync your data. Please contact an admin.");
-            if (!syncFailed.isEmpty()) {
-                platform.sendMessage(player.getUniqueId(), syncFailed);
-            }
-
-            if (discordManager != null && platform.getConfigBoolean("discord.events.sync_failed", true)) {
-                discordManager.sendSyncFailed(player.getName(), ex.getMessage());
-            }
+            onLoadFailed(player, force, ex);
             return null;
         });
     }
 
-    private void finishLoad(PDSPlayer player) {
+    /** A load or apply failed: retry after 1, 2 and 4 seconds, then tell the player and the team. */
+    private void onLoadFailed(PDSPlayer player, boolean force, Throwable ex) {
         UUID uuid = player.getUniqueId();
+        loadFailed.increment();
+        trackError("load data for " + player.getName(), ex);
+
+        int attempt = loadRetries.merge(uuid, 1, Integer::sum);
+        if (attempt <= MAX_LOAD_RETRIES) {
+            // The retry replaces any load queued meanwhile; running both would apply twice.
+            syncInProgress.remove(uuid);
+            Boolean queued = reloadRequested.remove(uuid);
+            boolean retryForce = force || Boolean.TRUE.equals(queued);
+            long delay = 1000L << (attempt - 1);
+            logger.warning("Retrying load for " + player.getName() + " in " + delay + " ms (attempt " + attempt + "/" + MAX_LOAD_RETRIES + ").");
+            CompletableFuture.delayedExecutor(delay, TimeUnit.MILLISECONDS).execute(() -> platform.runTask(() -> {
+                PDSPlayer current = platform.getPlayer(uuid);
+                if (current != null) {
+                    handleJoin(current, retryForce);
+                }
+            }));
+            return;
+        }
+        loadRetries.remove(uuid);
+        finishLoad(uuid);
+
+        if (loaded.contains(uuid)) {
+            // A reload (proxy, Redis, recheck) for a player whose data is already in place: keep it.
+            logger.warning("Reload for " + player.getName() + " failed; keeping the data applied earlier.");
+            return;
+        }
+        // Saves stay refused, but the player is no longer held in place: /pds load or a rejoin retries.
+        gaveUp.add(uuid);
+        logger.severe("Giving up loading data for " + player.getName() + ". Their progress on this server is not saved until "
+                + "/pds load " + player.getName() + " or a rejoin succeeds.");
+        platform.runTask(() -> {
+            String syncFailed = platform.getConfigString("messages.sync_failed", "&cFailed to sync your data. Please contact an admin.");
+            if (!syncFailed.isEmpty() && platform.isOnline(uuid)) {
+                platform.sendMessage(uuid, syncFailed);
+            }
+        });
+        if (discordManager != null && platform.getConfigBoolean("discord.events.sync_failed", true)) {
+            discordManager.sendSyncFailed(player.getName(), ex.getMessage());
+        }
+    }
+
+    private void finishLoad(UUID uuid) {
         syncInProgress.remove(uuid);
         Boolean force = reloadRequested.remove(uuid);
         if (force != null) {
             platform.runTask(() -> {
-                if (platform.isOnline(uuid)) {
-                    handleJoin(player, force);
+                // Look the player up again: after a reconnect the old player object is gone.
+                PDSPlayer current = platform.getPlayer(uuid);
+                if (current != null) {
+                    handleJoin(current, force);
                 }
             });
         }
     }
 
-    private void applyData(PDSPlayer player, PlayerData data, long startTime, boolean force) {
-        UUID uuid = player.getUniqueId();
-        if (platform.isOnline(uuid)) {
-            Long applied = appliedSavedAt.get(uuid);
-            if (!force && data.savedAt != 0L && applied != null && applied == data.savedAt) {
-                // A late Redis notification for a record we already have; applying it again would
-                // undo what the player did since.
-                loadSuccess.increment();
-                logger.info("Skipped reload for " + player.getName() + ": stored data is already applied.");
-                finishLoad(player);
-                return;
-            }
-
-            try {
-                filterForApply(data);
-                versionHandler.apply(player, data);
-                appliedSavedAt.put(uuid, data.savedAt);
-                basisSavedAt.put(uuid, data.savedAt);
-                if (data.savedBy != null && !data.savedBy.isBlank()) {
-                    appliedSavedBy.put(uuid, data.savedBy);
-                } else {
-                    appliedSavedBy.remove(uuid);
-                }
-                loadRetries.remove(uuid);
-                loaded.add(uuid);
-
-                if (data.isSynced("economy")) {
-                    writeBalance(player, data.balance);
-                }
-
-                if (data.inventoryContents != null && data.isSynced("inventory")) {
-                    lastSavedInventory.put(uuid, data.inventoryContents);
-                }
-
-                long duration = System.currentTimeMillis() - startTime;
-                lastLoadDurationMs.set(duration);
-                loadSuccess.increment();
-
-                String syncComplete = platform.getConfigString("messages.sync_complete", "&aData synced successfully!");
-                if (!syncComplete.isEmpty()) {
-                    platform.sendMessage(player.getUniqueId(), syncComplete);
-                }
-                logger.info("Successfully synced data for player: " + player.getName() + " (" + duration + "ms)");
-
-                if (discordManager != null && platform.getConfigBoolean("discord.events.sync_success", true)) {
-                    discordManager.sendSyncSuccess(player.getName(), duration);
-                }
-                scheduleRecheck(uuid);
-            } catch (Exception ex) {
-                loadFailed.increment();
-                trackError("apply data for " + player.getName(), ex);
-            }
+    private void applyData(PDSPlayer loadingPlayer, PlayerData data, long startTime, boolean force, long session) {
+        UUID uuid = loadingPlayer.getUniqueId();
+        PDSPlayer player = platform.getPlayer(uuid);
+        if (player == null || sessions.getOrDefault(uuid, 0L) != session) {
+            // The player left, or left and reconnected, while the record was loading. Applying it then
+            // would mark the new session as loaded with data meant for the old one.
+            finishLoad(uuid);
+            return;
         }
-        finishLoad(player);
+        // Apply to the current player object: on Fabric a respawn replaces it.
+        Long applied = appliedSavedAt.get(uuid);
+        if (!force && data.savedAt != 0L && applied != null && applied == data.savedAt) {
+            // A late Redis notification for a record we already have; applying it again would
+            // undo what the player did since.
+            loadSuccess.increment();
+            logger.info("Skipped reload for " + player.getName() + ": stored data is already applied.");
+            finishLoad(uuid);
+            return;
+        }
+
+        try {
+            filterForApply(data);
+            versionHandler.apply(player, data);
+        } catch (Throwable ex) {
+            // Includes linkage errors from a handler that does not fit this server version. The
+            // player stays unloaded, so this server's local data is never saved over the record.
+            onLoadFailed(player, force, ex);
+            return;
+        }
+
+        appliedSavedAt.put(uuid, data.savedAt);
+        basisSavedAt.put(uuid, data.savedAt);
+        if (data.savedBy != null && !data.savedBy.isBlank()) {
+            appliedSavedBy.put(uuid, data.savedBy);
+        } else {
+            appliedSavedBy.remove(uuid);
+        }
+        loadRetries.remove(uuid);
+        lastSavedFingerprint.remove(uuid);
+        loaded.add(uuid);
+
+        if (data.isSynced("economy")) {
+            writeBalance(player, data.balance);
+        }
+
+        long duration = System.currentTimeMillis() - startTime;
+        lastLoadDurationMs.set(duration);
+        loadSuccess.increment();
+
+        String syncComplete = platform.getConfigString("messages.sync_complete", "&aData synced successfully!");
+        if (!syncComplete.isEmpty()) {
+            platform.sendMessage(uuid, syncComplete);
+        }
+        logger.info("Successfully synced data for player: " + player.getName() + " (" + duration + "ms)");
+
+        if (discordManager != null && platform.getConfigBoolean("discord.events.sync_success", true)) {
+            discordManager.sendSyncSuccess(player.getName(), duration);
+        }
+        scheduleRecheck(uuid);
+        finishLoad(uuid);
     }
 
     /**
@@ -393,6 +451,8 @@ public class SyncManager {
     public CompletableFuture<Void> handleDisconnect(PDSPlayer player) {
         CompletableFuture<Void> save = handleQuit(player, false);
         UUID uuid = player.getUniqueId();
+        sessions.merge(uuid, 1L, Long::sum);
+        gaveUp.remove(uuid);
         loaded.remove(uuid);
         appliedSavedAt.remove(uuid);
         appliedSavedBy.remove(uuid);
@@ -402,11 +462,14 @@ public class SyncManager {
         recheckScheduled.remove(uuid);
         lastStaleReload.remove(uuid);
         refusedSaves.remove(uuid);
-        save.whenComplete((unused, ex) -> {
+        lastSaveMillis.remove(uuid);
+        lastSavedFingerprint.remove(uuid);
+        save.whenComplete((unused, ex) -> platform.runTask(() -> {
             if (!platform.isOnline(uuid)) {
                 ownSavedAt.remove(uuid);
+                lastSavedFingerprint.remove(uuid);
             }
-        });
+        }));
         return save;
     }
 
@@ -417,16 +480,42 @@ public class SyncManager {
         basisSavedAt.put(player.getUniqueId(), BASIS_UNCHECKED);
     }
 
-    /** Saves every given player; used on shutdown and reload. Failures do not fail the returned future. */
+    /** Whether the stored record has been applied to this player on this server. */
+    public boolean isLoaded(UUID uuid) {
+        return loaded.contains(uuid);
+    }
+
+    /** Whether the player waits for their stored data: not loaded and the load has not been given up. */
+    public boolean isWaitingForData(UUID uuid) {
+        return !loaded.contains(uuid) && !gaveUp.contains(uuid);
+    }
+
+    /** Saves every given player; used on reload. Failures do not fail the returned future. */
     public CompletableFuture<Void> saveAll(Iterable<PDSPlayer> players) {
         List<CompletableFuture<Void>> saves = new ArrayList<>();
         for (PDSPlayer player : players) {
-            saves.add(handleQuit(player, false).exceptionally(ex -> null));
+            saves.add(save(player, false).exceptionally(ex -> null));
         }
         return CompletableFuture.allOf(saves.toArray(new CompletableFuture[0]));
     }
 
+    /**
+     * Saves every given player for the shutdown. Disconnect and quit saves that follow are skipped,
+     * because they would race with these saves and be refused as stale.
+     */
+    public CompletableFuture<Void> shutdown(Iterable<PDSPlayer> players) {
+        stopping = true;
+        return saveAll(players);
+    }
+
     public CompletableFuture<Void> handleQuit(PDSPlayer player, boolean isAutosave) {
+        if (stopping) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return save(player, isAutosave);
+    }
+
+    private CompletableFuture<Void> save(PDSPlayer player, boolean isAutosave) {
         if (isWorldExcluded(player.getWorldName())) {
             skippedByWorld.increment();
             logger.info("Skipped saving for " + player.getName() + " in excluded world " + player.getWorldName());
@@ -457,33 +546,45 @@ public class SyncManager {
         }
 
         saveAttempts.increment();
-        PlayerData data = versionHandler.capture(player);
-        data.savedAt = System.currentTimeMillis();
-        data.savedBy = serverName();
+        PlayerData data;
+        try {
+            data = versionHandler.capture(player);
+        } catch (Throwable ex) {
+            saveFailed.increment();
+            trackError("capture data for " + player.getName(), ex);
+            return CompletableFuture.failedFuture(ex);
+        }
         if (platform.getConfigBoolean("sync.economy", true)) {
             data.balance = readBalance(player);
         }
-        filterData(data); // Apply config filters
-
-        if (data.inventoryContents != null) {
-            // Compare the full serialized inventory: a hash collision must not drop a changed inventory.
-            if (data.inventoryContents.equals(lastSavedInventory.get(player.getUniqueId()))
-                    && !platform.getConfigBoolean("sync.force_save_on_quit", false)) {
-                skippedByHash.increment();
-                return CompletableFuture.completedFuture(null);
-            }
-        } else {
-            lastSavedInventory.remove(player.getUniqueId());
+        if (economy == null || Double.isNaN(data.balance)) {
+            // No Vault economy here (or reading it failed): the stored 0 is not the player's balance,
+            // and a server with an economy must not set them to 0.
+            data.balance = 0.0;
+            data.markNotSynced("economy");
         }
+        filterData(data); // Apply config filters
+        sanitize(data);
 
         UUID uuid = player.getUniqueId();
+        // Compare the whole record, not only the inventory: XP, health, the ender chest and the rest
+        // change without the inventory changing, and skipping those saves would roll them back.
+        String fingerprint = fingerprintGson.toJson(data);
+        if (fingerprint.equals(lastSavedFingerprint.get(uuid))
+                && !platform.getConfigBoolean("sync.force_save_on_quit", false)) {
+            skippedByHash.increment();
+            return CompletableFuture.completedFuture(null);
+        }
+        data.savedAt = System.currentTimeMillis();
+        data.savedBy = serverName();
+
         long basis = basisSavedAt.getOrDefault(uuid, BASIS_UNCHECKED);
         ownSavedAt.put(uuid, data.savedAt);
         long startTime = System.currentTimeMillis();
         CompletableFuture<Boolean> write = basis == BASIS_UNCHECKED
                 ? storage.save(data).thenApply(v -> true)
                 : storage.saveChecked(data, basis, nodeId);
-        return write.thenAccept(written -> {
+        CompletableFuture<Void> result = write.thenAccept(written -> {
             if (!written) {
                 onStaleSave(player);
                 return;
@@ -491,15 +592,15 @@ public class SyncManager {
             if (platform.isOnline(uuid)) {
                 // From now on our own record is the one this server's state is based on.
                 basisSavedAt.computeIfPresent(uuid, (k, v) -> data.savedAt);
+                // A load of our own record (proxy "load:", Redis) must not reapply it.
+                appliedSavedAt.computeIfPresent(uuid, (k, v) -> data.savedAt);
+                lastSavedFingerprint.put(uuid, fingerprint);
             }
 
             long duration = System.currentTimeMillis() - startTime;
             lastSaveDurationMs.set(duration);
             saveSuccess.increment();
             lastSaveMillis.put(uuid, System.currentTimeMillis());
-            if (data.inventoryContents != null) {
-                lastSavedInventory.put(uuid, data.inventoryContents);
-            }
             if (!isAutosave) {
                 logger.info("Saved data for player: " + player.getName());
                 if (redisManager != null) {
@@ -512,6 +613,35 @@ public class SyncManager {
                 trackError("save data for " + player.getName(), ex);
             }
         });
+        inFlightSaves.put(uuid, result);
+        result.whenComplete((unused, ex) -> inFlightSaves.remove(uuid, result));
+        return result;
+    }
+
+    /** NaN or infinite values (another plugin's bug) would make the record unwritable or unappliable. */
+    private static void sanitize(PlayerData data) {
+        data.health = finite(data.health, 20.0);
+        data.healthScale = finite(data.healthScale, 20.0);
+        data.absorptionAmount = finite(data.absorptionAmount, 0.0);
+        data.saturation = (float) finite(data.saturation, 5.0);
+        data.exhaustion = (float) finite(data.exhaustion, 0.0);
+        data.exp = (float) Math.max(0.0, Math.min(1.0, finite(data.exp, 0.0)));
+        data.walkSpeed = (float) finite(data.walkSpeed, 0.2);
+        data.flySpeed = (float) finite(data.flySpeed, 0.1);
+        data.fallDistance = (float) finite(data.fallDistance, 0.0);
+        data.balance = finite(data.balance, 0.0);
+        data.x = finite(data.x, 0.0);
+        data.y = finite(data.y, 0.0);
+        data.z = finite(data.z, 0.0);
+        data.yaw = (float) finite(data.yaw, 0.0);
+        data.pitch = (float) finite(data.pitch, 0.0);
+        if (data.attributes != null) {
+            data.attributes.entrySet().removeIf(e -> e.getValue() == null || !Double.isFinite(e.getValue()));
+        }
+    }
+
+    private static double finite(double value, double fallback) {
+        return Double.isFinite(value) ? value : fallback;
     }
 
     /** Another server stored a newer record after this server loaded the player. Nothing was written. */
@@ -668,7 +798,9 @@ public class SyncManager {
 
     private String normalizeWorldName(String worldName) {
         if (worldName == null) return "";
-        return worldName.trim().toLowerCase(Locale.ROOT);
+        // Fabric reports minecraft:the_nether where Paper reports world_nether: compare both as the dimension id.
+        String dimension = WorldNames.toDimensionId(worldName);
+        return dimension != null ? dimension : worldName.trim().toLowerCase(Locale.ROOT);
     }
 
     private long getConfigLong(String path, long defaultValue) {

@@ -41,8 +41,18 @@ public class PlayerDataSyncVelocity {
     private final Path dataDirectory;
     public static final MinecraftChannelIdentifier IDENTIFIER = MinecraftChannelIdentifier.from("pds:sync");
 
-    /** Switches waiting for the source server's {@code saved:<uuid>} answer. */
-    private final ConcurrentHashMap<UUID, CompletableFuture<Void>> pendingSaves = new ConcurrentHashMap<>();
+    /** A switch waiting for the source server's {@code saved:<uuid>:<id>} answer. */
+    private static final class PendingSave {
+        final String id;
+        final CompletableFuture<Void> ack = new CompletableFuture<>();
+
+        PendingSave(String id) {
+            this.id = id;
+        }
+    }
+
+    /** Switches waiting for the source server's answer. */
+    private final ConcurrentHashMap<UUID, PendingSave> pendingSaves = new ConcurrentHashMap<>();
     /** Backends that did not answer in time; switches away from them no longer wait until they answer again. */
     private final Set<String> silentServers = ConcurrentHashMap.newKeySet();
     private long saveAckTimeoutMs = 2000L;
@@ -89,20 +99,30 @@ public class PlayerDataSyncVelocity {
     @Subscribe
     public EventTask onServerPreConnect(ServerPreConnectEvent event) {
         ServerConnection current = event.getPlayer().getCurrentServer().orElse(null);
-        if (current == null) {
+        if (current == null || !event.getResult().isAllowed()) {
+            // First join, or another plugin already denied the switch: nothing to save for.
+            return null;
+        }
+        if (event.getResult().getServer().map(target -> target.equals(current.getServer())).orElse(false)) {
             return null;
         }
 
         UUID uuid = event.getPlayer().getUniqueId();
         String serverName = current.getServerInfo().getName();
-        CompletableFuture<Void> ack = new CompletableFuture<>();
-        pendingSaves.put(uuid, ack);
-        current.sendPluginMessage(IDENTIFIER, ("save:" + uuid).getBytes(StandardCharsets.UTF_8));
+        // The id ties the answer to this switch: a late answer from an earlier switch must not
+        // release this one. Backends older than 26.12-Alpha.3 answer without it.
+        PendingSave pending = new PendingSave(Long.toHexString(java.util.concurrent.ThreadLocalRandom.current().nextLong()));
+        boolean wait = saveAckTimeoutMs > 0L && !silentServers.contains(serverName);
+        if (wait) {
+            pendingSaves.put(uuid, pending);
+        }
+        current.sendPluginMessage(IDENTIFIER, ("save:" + uuid + ":" + pending.id).getBytes(StandardCharsets.UTF_8));
         logger.info("Triggered fast-save for {} on {}", event.getPlayer().getUsername(), serverName);
 
-        if (saveAckTimeoutMs <= 0L || silentServers.contains(serverName)) {
+        if (!wait) {
             return null;
         }
+        CompletableFuture<Void> ack = pending.ack;
         return EventTask.async(() -> {
             try {
                 ack.get(saveAckTimeoutMs, TimeUnit.MILLISECONDS);
@@ -113,7 +133,7 @@ public class PlayerDataSyncVelocity {
             } catch (Exception ignored) {
                 // interrupted or cancelled: connect without waiting
             } finally {
-                pendingSaves.remove(uuid, ack);
+                pendingSaves.remove(uuid, pending);
             }
         });
     }
@@ -124,6 +144,9 @@ public class PlayerDataSyncVelocity {
             return;
         }
         if (!(event.getSource() instanceof ServerConnection source)) {
+            // From a client: never forward it. A modded client could otherwise make the backend
+            // save or load on demand (the backend cannot tell the proxy from the client).
+            event.setResult(PluginMessageEvent.ForwardResult.handled());
             return;
         }
         // Backend-to-proxy messages; never forward them to the client.
@@ -133,17 +156,33 @@ public class PlayerDataSyncVelocity {
         if (!msg.startsWith("saved:")) {
             return;
         }
+        String[] parts = msg.substring("saved:".length()).trim().split(":", 2);
         UUID uuid;
         try {
-            uuid = UUID.fromString(msg.substring("saved:".length()).trim());
+            uuid = UUID.fromString(parts[0]);
         } catch (IllegalArgumentException e) {
             logger.warn("Ignoring malformed save ack from {}: {}", source.getServerInfo().getName(), msg);
             return;
         }
+        // Any answer shows the server answers again, even a late one.
         silentServers.remove(source.getServerInfo().getName());
-        CompletableFuture<Void> ack = pendingSaves.remove(uuid);
-        if (ack != null) {
-            ack.complete(null);
+        // Only the server the player is leaving answers for them.
+        boolean fromCurrent = server.getPlayer(uuid)
+                .flatMap(p -> p.getCurrentServer())
+                .map(c -> c.getServerInfo().getName().equals(source.getServerInfo().getName()))
+                .orElse(false);
+        if (!fromCurrent) {
+            return;
+        }
+        PendingSave pending = pendingSaves.get(uuid);
+        if (pending == null) {
+            return;
+        }
+        if (parts.length == 2 && !parts[1].equals(pending.id)) {
+            return; // answer to an earlier switch
+        }
+        if (pendingSaves.remove(uuid, pending)) {
+            pending.ack.complete(null);
         }
     }
 

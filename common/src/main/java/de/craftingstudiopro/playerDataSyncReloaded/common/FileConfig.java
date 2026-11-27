@@ -35,7 +35,8 @@ public class FileConfig {
                 writeDefaults(file);
                 logger.info("Created default config at " + file.toAbsolutePath());
             }
-            try (InputStream in = Files.newInputStream(file)) {
+            // UTF-8, so messages with umlauts are read as written.
+            try (java.io.Reader in = new java.io.InputStreamReader(Files.newInputStream(file), java.nio.charset.StandardCharsets.UTF_8)) {
                 properties.load(in);
             }
         } catch (IOException e) {

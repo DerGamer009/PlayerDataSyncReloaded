@@ -42,8 +42,15 @@ final class PdsCommand {
                     SyncManager manager = manager(ctx, sync);
                     if (manager == null) return 0;
                     ServerPlayer player = EntityArgument.getPlayer(ctx, "player");
-                    manager.handleQuit(new FabricPDSPlayer(player));
-                    send(ctx, List.of("Saving data for " + player.getName().getString()));
+                    String name = player.getName().getString();
+                    if (!manager.isLoaded(player.getUUID())) {
+                        send(ctx, List.of("Not saved: the stored data of " + name + " has not been applied on this server yet (see /pds info)."));
+                        return 0;
+                    }
+                    send(ctx, List.of("Saving data for " + name + "..."));
+                    var source = ctx.getSource();
+                    manager.handleQuit(new FabricPDSPlayer(player)).whenComplete((unused, ex) -> source.getServer().execute(() ->
+                            sendTo(source, ex == null ? "Saved data for " + name + "." : "Could not save data for " + name + ": " + ex.getMessage())));
                     return 1;
                 })))
                 .then(literal("load").then(argument("player", EntityArgument.player()).executes(ctx -> {
@@ -59,7 +66,7 @@ final class PdsCommand {
                     if (manager == null) return 0;
                     int count = 0;
                     for (ServerPlayer player : ctx.getSource().getServer().getPlayerList().getPlayers()) {
-                        manager.handleQuit(new FabricPDSPlayer(player), true);
+                        manager.handleQuit(new FabricPDSPlayer(player), false);
                         count++;
                     }
                     send(ctx, List.of("Triggered save for " + count + " online player(s)."));
@@ -74,6 +81,10 @@ final class PdsCommand {
             ctx.getSource().sendFailure(Component.literal("PlayerDataSync is not initialized. Check the storage settings and the server log."));
         }
         return manager;
+    }
+
+    private static void sendTo(CommandSourceStack source, String line) {
+        source.sendSuccess(() -> Component.literal(line), false);
     }
 
     private static void send(CommandContext<CommandSourceStack> ctx, List<String> lines) {

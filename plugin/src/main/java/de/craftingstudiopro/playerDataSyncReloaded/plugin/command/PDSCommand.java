@@ -52,8 +52,17 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
                     sender.sendMessage("\u00A7cPlayer not found.");
                     return true;
                 }
-                plugin.getSyncManager().handleQuit(new BukkitPDSPlayer(saveTarget));
-                sender.sendMessage("\u00A7aManually saved data for " + saveTarget.getName());
+                if (!plugin.getSyncManager().isLoaded(saveTarget.getUniqueId())) {
+                    sender.sendMessage("\u00A7cNot saved: the stored data of " + saveTarget.getName()
+                            + " has not been applied on this server yet (see /pds info).");
+                    return true;
+                }
+                String savedName = saveTarget.getName();
+                sender.sendMessage("\u00A77Saving data for " + savedName + "...");
+                plugin.getSyncManager().handleQuit(new BukkitPDSPlayer(saveTarget)).whenComplete((unused, ex) ->
+                        Bukkit.getScheduler().runTask(plugin, () -> sender.sendMessage(ex == null
+                                ? "\u00A7aSaved data for " + savedName + "."
+                                : "\u00A7cCould not save data for " + savedName + ": " + ex.getMessage())));
                 return true;
             case "load":
                 if (args.length < 2) {
@@ -71,7 +80,8 @@ public class PDSCommand implements CommandExecutor, TabCompleter {
             case "saveall":
                 int online = 0;
                 for (org.bukkit.entity.Player player : Bukkit.getOnlinePlayers()) {
-                    plugin.getSyncManager().handleQuit(new BukkitPDSPlayer(player), true);
+                    // Not the autosave path: no cooldown, and other servers are notified over Redis.
+                    plugin.getSyncManager().handleQuit(new BukkitPDSPlayer(player), false);
                     online++;
                 }
                 sender.sendMessage("\u00A7aTriggered save for " + online + " online player(s).");

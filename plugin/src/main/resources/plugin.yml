@@ -1,10 +1,10 @@
 name: PlayerDataSyncReloaded
 version: '$version'
 main: de.craftingstudiopro.playerDataSyncReloaded.PlayerDataSyncReloaded
-api-version: '1.21'
+api-version: '1.20'
 load: POSTWORLD
+softdepend: [Vault]
 prefix: PlayerDataSync
-folia-supported: true
 description: Synchronize player data across multiple server instances.
 author: CraftingStudioPro, DerGamer09
 website: https://craftingstudiopro.de

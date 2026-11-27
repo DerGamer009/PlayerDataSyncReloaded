@@ -22,13 +22,13 @@ public class UpdateChecker implements Listener {
     private final PlayerDataSyncReloaded plugin;
     private final String currentVersion;
     private final String projectId = "playerdatasync"; // Modrinth slug
-    private String latestVersion;
-    private boolean updateAvailable = false;
+    private volatile String latestVersion;
+    private volatile boolean updateAvailable = false;
 
     public UpdateChecker(PlayerDataSyncReloaded plugin) {
         this.plugin = plugin;
         this.currentVersion = plugin.getDescription().getVersion();
-        
+
         // Register listener for join notifications
         Bukkit.getPluginManager().registerEvents(this, plugin);
     }
@@ -43,13 +43,17 @@ public class UpdateChecker implements Listener {
                 HttpURLConnection connection = (HttpURLConnection) url.openConnection();
                 connection.setRequestMethod("GET");
                 connection.setRequestProperty("User-Agent", "PlayerDataSyncReloaded-UpdateChecker");
+                connection.setConnectTimeout(5000);
+                connection.setReadTimeout(5000);
 
                 if (connection.getResponseCode() == 200) {
                     JsonArray versions = JsonParser.parseReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8)).getAsJsonArray();
                     latestVersion = newestFor(versions, isPreRelease(currentVersion));
 
                     if (latestVersion != null) {
-                        if (!currentVersion.equalsIgnoreCase(latestVersion)) {
+                        // Only a newer version counts: a backport published after a newer build, or a
+                        // local build ahead of Modrinth, is not an update.
+                        if (de.craftingstudiopro.playerDataSyncReloaded.common.util.Versions.compare(latestVersion, currentVersion) > 0) {
                             updateAvailable = true;
                             plugin.getLogger().warning("§e[PlayerDataSync] A new version is available: §f" + latestVersion);
                             plugin.getLogger().warning("§e[PlayerDataSync] You are currently running: §f" + currentVersion);
@@ -79,8 +83,7 @@ public class UpdateChecker implements Listener {
     }
 
     static boolean isPreRelease(String version) {
-        String v = version.toLowerCase(Locale.ROOT);
-        return v.contains("alpha") || v.contains("beta");
+        return de.craftingstudiopro.playerDataSyncReloaded.common.util.Versions.isPreRelease(version);
     }
 
     @EventHandler

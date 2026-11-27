@@ -26,6 +26,7 @@ import dev.faststats.core.Metrics;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 
 public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener {
@@ -49,7 +50,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
     public void onEnable() {
         sendBanner();
         saveDefaultConfig();
-        
+
         if (!setupVersionHandler()) {
             getLogger().severe("§cCould not support your server version: " + Bukkit.getBukkitVersion());
             Bukkit.getPluginManager().disablePlugin(this);
@@ -62,7 +63,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
             Bukkit.getPluginManager().disablePlugin(this);
             return;
         }
-        
+
         getLogger().info("§aSuccessfully connected to storage backend.");
 
         this.platform = new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPlatform(this);
@@ -73,25 +74,41 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         setupVault();
         setupRedis();
         setupDiscord();
-        
+
         getServer().getMessenger().registerOutgoingPluginChannel(this, "pds:sync");
         getServer().getMessenger().registerIncomingPluginChannel(this, "pds:sync", (channel, player, message) -> {
             String msg = new String(message, StandardCharsets.UTF_8);
             if (msg.startsWith("save:")) {
                 // Save handshake: answer once the save has finished, failed or was skipped, so the
-                // proxy can let the player connect to the next server.
-                syncManager.handleQuit(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player)).whenComplete((unused, ex) ->
+                // proxy can let the player connect to the next server. The answer repeats what came
+                // after "save:" (uuid and, from 26.12-Alpha.3 proxies, a request id).
+                String ack = "saved:" + msg.substring("save:".length());
+                // Items on the cursor or in the crafting grid are not part of the inventory yet.
+                player.closeInventory();
+                CompletableFuture<Void> save;
+                try {
+                    save = syncManager.handleQuit(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player));
+                } catch (RuntimeException e) {
+                    save = CompletableFuture.failedFuture(e);
+                }
+                save.whenComplete((unused, ex) ->
                         Bukkit.getScheduler().runTask(this, () -> {
                             if (player.isOnline()) {
-                                player.sendPluginMessage(this, "pds:sync", ("saved:" + player.getUniqueId()).getBytes(StandardCharsets.UTF_8));
+                                player.sendPluginMessage(this, "pds:sync", ack.getBytes(StandardCharsets.UTF_8));
                             }
                         }));
             } else if (msg.startsWith("load:")) {
-                syncManager.handleJoin(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player));
+                // The join event already loads. Only act if that has not happened yet: a client can
+                // send this message too, and reloading on demand would let it reset its own state.
+                java.util.UUID uuid = player.getUniqueId();
+                if (!syncManager.isLoaded(uuid) && !syncManager.isSyncInProgress(uuid)) {
+                    syncManager.handleJoin(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player));
+                }
             }
         });
 
         Bukkit.getPluginManager().registerEvents(this, this);
+        Bukkit.getPluginManager().registerEvents(new de.craftingstudiopro.playerDataSyncReloaded.plugin.LoadLockListener(this), this);
 
         org.bukkit.command.PluginCommand command = getCommand("playerdatasync");
         if (command != null) {
@@ -114,34 +131,46 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
 
         startAutoSaveTask();
 
+        // Players already online (Bukkit /reload, plugin managers) never fire a join for us: load them now.
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            syncManager.handleJoin(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player));
+        }
+
         getLogger().info("PlayerDataSyncReloaded version " + getDescription().getVersion() + " enabled.");
     }
 
     private boolean setupVersionHandler() {
         String bukkitVersion = Bukkit.getBukkitVersion();
-        
+
         getLogger().info("Detected Bukkit Version: " + bukkitVersion);
 
         try {
-            if (bukkitVersion.startsWith("26.2")) {
-                this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v26_2.VersionHandlerImpl();
-            } else if (bukkitVersion.contains("1.21.4") || bukkitVersion.contains("26.1.1") || bukkitVersion.contains("26.1.2")) {
-                this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v26_1.VersionHandlerImpl();
-            } else if (bukkitVersion.contains("1.21.1") || bukkitVersion.startsWith("1.21")) {
-                this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1.VersionHandlerImpl();
-            } else if (bukkitVersion.startsWith("1.20")) {
-                // Actually, v1_20_R1 might not be implemented yet or has a different name
-                // For now we'll assume a standard naming or fallback to 1.21
-                try {
-                    this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_20_R1.VersionHandlerImpl();
-                } catch (NoClassDefFoundError e) {
+            // Pick the newest handler at or below the server version: 26.1 without a patch number,
+            // 26.1.3 or 26.3 used to fall through to the 1.21 handler.
+            String handler = de.craftingstudiopro.playerDataSyncReloaded.common.util.Versions.paperHandlerFor(bukkitVersion);
+            int[] parsed = de.craftingstudiopro.playerDataSyncReloaded.common.util.Versions.parseMinecraft(bukkitVersion);
+            if (handler == null) {
+                getLogger().severe("Server version " + bukkitVersion + " is older than 1.20 and not supported.");
+                return false;
+            }
+            if (parsed == null) {
+                getLogger().warning("Could not read the server version '" + bukkitVersion + "'. Using the 26.2 handler.");
+            } else if (de.craftingstudiopro.playerDataSyncReloaded.common.util.Versions.compareMinecraft(parsed, 26, 3, 0) >= 0) {
+                getLogger().warning("Server version " + bukkitVersion + " is newer than the last tested one (26.2). Using the 26.2 handler.");
+            }
+            switch (handler) {
+                case "v26_2":
+                    this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v26_2.VersionHandlerImpl();
+                    break;
+                case "v26_1":
+                    this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v26_1.VersionHandlerImpl();
+                    break;
+                case "v1_21_R1":
                     this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1.VersionHandlerImpl();
-                    getLogger().warning("1.20 implementation not found, falling back to 1.21 handler.");
-                }
-            } else {
-                // Default to 1.21 handler as it's the most stable modern version
-                this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_21_R1.VersionHandlerImpl();
-                getLogger().warning("Unsupported Bukkit version! Using 1.21 fallback. Might have issues.");
+                    break;
+                default:
+                    this.versionHandler = new de.craftingstudiopro.playerDataSyncReloaded.v1_20_R1.VersionHandlerImpl();
+                    break;
             }
             return true;
         } catch (NoClassDefFoundError | Exception e) {
@@ -215,7 +244,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
     private void sendBanner() {
         String version = getDescription().getVersion();
         String authors = "CraftingStudioPro, DerGamer09";
-        
+
         Bukkit.getConsoleSender().sendMessage("§b");
         Bukkit.getConsoleSender().sendMessage("§b  ____  ____   ____    ____  _____ _      ___  ____  ____  _____ ____  ");
         Bukkit.getConsoleSender().sendMessage("§b |  _ \\|  _  | / ___|  |  _ \\| ____| |    / _ \\|  _ \\|  _ \\| ____|  _ \\ ");
@@ -237,7 +266,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
             autoSaveTask = null;
         }
         // Paper disables plugins before it kicks the players, so the quit event never saves them.
-        saveOnlinePlayers();
+        saveOnShutdown();
         if (storage != null) {
             storage.close();
         }
@@ -334,11 +363,27 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         }
     }
 
+    private void saveOnShutdown() {
+        if (syncManager == null) {
+            return;
+        }
+        List<de.craftingstudiopro.playerDataSyncReloaded.api.PDSPlayer> players = new ArrayList<>();
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            players.add(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player));
+        }
+        if (!players.isEmpty()) {
+            getLogger().info("Saving data for " + players.size() + " online player(s)...");
+        }
+        // Also marks the manager as stopping, so a quit event that still fires does not save again.
+        syncManager.shutdown(players);
+    }
+
     public void reloadPlugin() {
         if (autoSaveTask != null) {
             autoSaveTask.cancel();
             autoSaveTask = null;
         }
+        SyncManager previous = syncManager;
         saveOnlinePlayers();
         if (storage != null) {
             storage.close();
@@ -351,20 +396,31 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         reloadConfig();
 
         if (!setupVersionHandler()) {
-            getLogger().severe("\u00A7cCould not support your server version during reload!");
+            getLogger().severe("\u00A7cCould not support your server version during reload! Disabling the plugin.");
+            // The old manager works on the closed storage: drop it so onDisable does not save through it.
+            syncManager = null;
+            Bukkit.getPluginManager().disablePlugin(this);
             return;
         }
 
         if (!setupStorage()) {
-            getLogger().severe("\u00A7cFailed to re-initialize storage!");
+            getLogger().severe("\u00A7cFailed to re-initialize storage! Disabling the plugin.");
+            syncManager = null;
+            Bukkit.getPluginManager().disablePlugin(this);
             return;
         }
 
         this.platform = new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPlatform(this);
         this.syncManager = new SyncManager(this.platform, storage, versionHandler);
-        // The new SyncManager has never loaded these players; without this every save would be refused.
         for (Player player : Bukkit.getOnlinePlayers()) {
-            syncManager.markLoaded(new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player));
+            de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer pdsPlayer = new de.craftingstudiopro.playerDataSyncReloaded.plugin.BukkitPDSPlayer(player);
+            if (previous != null && previous.isLoaded(player.getUniqueId())) {
+                // The new SyncManager has never loaded these players; without this every save would be refused.
+                syncManager.markLoaded(pdsPlayer);
+            } else {
+                // Their load had not finished (or failed): load now instead of treating stale local data as current.
+                syncManager.handleJoin(pdsPlayer);
+            }
         }
         this.backupManager = new de.craftingstudiopro.playerDataSyncReloaded.common.BackupManager(getLogger(), storage, new java.io.File(getDataFolder(), "backups"));
         this.api = new BukkitPlayerDataSyncAPI(this);
@@ -404,7 +460,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
         } else {
             targetStorage = new SqlStorage(getLogger(), type, host, port, database, user, password);
         }
-        
+
         if (targetStorage instanceof MongoStorage) ((MongoStorage) targetStorage).setEncryptionKey(encryptionKey);
         if (targetStorage instanceof SqlStorage) ((SqlStorage) targetStorage).setEncryptionKey(encryptionKey);
 
@@ -412,7 +468,7 @@ public final class PlayerDataSyncReloaded extends JavaPlugin implements Listener
             targetStorage.init();
             Migrator migrator = new Migrator(getLogger(), this.storage, targetStorage);
             migrator.setLegacy(config.getBoolean("migration.legacy", false));
-            
+
             migrator.run().thenRun(() -> {
                 sender.sendMessage("§aMigration finished! Please update your §fconfig.yml §ato the new storage and reload.");
                 targetStorage.close();
